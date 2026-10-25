@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P4US CCTV – Dashboard</title>
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <style>
+    html, body { height: 100%; overflow: hidden; }
+    .app { display: grid; grid-template-rows: 48px 1fr; height: 100vh; }
+
+    .topbar {
+      background: var(--bg-card); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; padding: 0 16px; gap: 12px; z-index: 100;
+    }
+    .topbar-logo { display: flex; align-items: center; gap: 8px; }
+    .topbar-logo img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+    .topbar-logo .name { font-weight: 700; font-size: 13px; letter-spacing: 2px; color: #ddd; text-transform: uppercase; }
+    .topbar-logo .sub { font-size: 9px; color: var(--accent); letter-spacing: 2px; }
+    .topbar-sep { flex: 1; }
+    .topbar-info { font-size: 12px; color: var(--text-muted); }
+    .topbar-user { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .btn-sm {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
+      border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px;
+      transition: border-color .2s, color .2s;
+    }
+    .btn-sm:hover { border-color: var(--accent); color: var(--text); }
+
+    .main { display: grid; grid-template-columns: 1fr 220px; overflow: hidden; }
+
+    .sidebar-header {
+      padding: 10px 12px; border-bottom: 1px solid var(--border);
+      font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+      color: var(--text-muted); display: flex; align-items: center; justify-content: space-between;
+    }
+
+    .center { display: flex; flex-direction: column; overflow: hidden; }
+    .map-panel { flex: 1 1 56%; position: relative; border-bottom: 2px solid var(--border); }
+    #map { width: 100%; height: 100%; background: #0a0a14; }
+
+    /* Filter overlay on the map (replaces the old left sidebar) */
+    .map-filter {
+      position: absolute; top: 8px; left: 8px; z-index: 20; display: flex; gap: 4px;
+      background: rgba(10,10,15,.82); border: 1px solid var(--border);
+      border-radius: 8px; padding: 4px;
+    }
+    .filter-btn {
+      background: transparent; border: 1px solid transparent; color: var(--text-muted);
+      border-radius: 5px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: all .15s;
+    }
+    .filter-btn:hover { color: var(--text); }
+    .filter-btn.active { border-color: var(--accent); color: var(--text); background: rgba(192,57,43,.18); }
+    #filter-online.active { border-color: var(--green); color: var(--green); background: rgba(39,174,96,.16); }
+    #filter-offline.active { border-color: var(--red); color: #ff8080; background: rgba(192,57,43,.16); }
+
+    /* Pencarian nama CCTV di peta */
+    .map-search { position: absolute; top: 46px; left: 8px; z-index: 21; width: 260px; }
+    .map-search input {
+      width: 100%; background: rgba(10,10,15,.9); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 8px 12px; font-size: 12px; outline: none;
+    }
+    .map-search input:focus { border-color: var(--accent); }
+    .map-search-results {
+      display: none; margin-top: 4px; max-height: 320px; overflow-y: auto;
+      background: rgba(10,10,15,.95); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .map-search-item {
+      display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,.04); font-size: 12px;
+    }
+    .map-search-item:last-child { border-bottom: 0; }
+    .map-search-item:hover { background: rgba(192,57,43,.14); }
+    .map-search-item .ms-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .map-search-item .ms-loc { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+    .map-search-empty { padding: 10px 12px; font-size: 11px; color: var(--text-muted); }
+
+    .map-overlay {
+      position: absolute; top: 8px; right: 8px; z-index: 20;
+      display: flex; gap: 10px; background: rgba(10,10,15,.82);
+      border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
+    }
+    .map-stat { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); }
+    .map-hint {
+      position: absolute; bottom: 8px; left: 8px; z-index: 20;
+      background: rgba(10,10,15,.82); border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 10px; font-size: 10px; color: var(--text-muted);
+    }
+    .maplibregl-popup-content {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); padding: 10px 12px; font-size: 11px;
+    }
+    .maplibregl-popup-tip { border-top-color: var(--bg-card) !important; border-bottom-color: var(--bg-card) !important; }
+    .maplibregl-popup-close-button { color: var(--text-muted); font-size: 16px; }
+    .popup-name { font-weight: 700; margin-bottom: 3px; }
+    .popup-meta { color: var(--text-muted); margin-bottom: 8px; }
+    .popup-add {
+      display: block; width: 100%; background: var(--accent); color: #fff; border: none;
+      border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 11px; font-weight: 600;
+    }
+    .popup-add:hover { background: var(--accent-hover); }
+    .popup-add:disabled { opacity: .5; cursor: not-allowed; }
+
+    .grid-panel { flex: 1 1 44%; overflow: hidden; display: flex; flex-direction: column; }
+    .grid-toolbar {
+      padding: 6px 12px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .grid-toolbar span { font-size: 11px; color: var(--text-muted); }
+    .grid-size-btn {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
+      border-radius: 4px; padding: 3px 9px; font-size: 11px; cursor: pointer; transition: all .15s;
+    }
+    .grid-size-btn.active { border-color: var(--accent); color: var(--text); }
+
+    /* Grid: sel landscape 16:9. 4 kamera = 2 kolom, 8 kamera = 4 kolom. */
+    /* Grid mengisi panel pas (tanpa overflow). Landscape via jumlah kolom. */
+    .video-grid { flex: 1; display: grid; gap: 4px; padding: 4px; overflow: hidden; background: #000; min-height: 0; }
+    .video-grid.grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+    .video-grid.grid-8 { grid-template-columns: repeat(4, 1fr); grid-template-rows: 1fr 1fr; }
+
+    .video-slot {
+      background: #080810; border: 1px solid var(--border);
+      border-radius: 4px; position: relative; overflow: hidden;
+      display: flex; align-items: center; justify-content: center; cursor: pointer; min-height: 0;
+    }
+    .video-slot.active-slot { border-color: var(--accent); }
+    .video-slot video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+    .slot-overlay {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(transparent, rgba(0,0,0,.85));
+      padding: 18px 8px 6px; display: flex; align-items: center; gap: 6px;
+    }
+    .slot-name { font-size: 10px; color: #fff; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .slot-actions { display: flex; gap: 4px; }
+    .slot-btn {
+      background: rgba(255,255,255,.12); border: none; color: #fff;
+      border-radius: 3px; padding: 2px 6px; font-size: 9px; cursor: pointer; transition: background .15s;
+    }
+    .slot-btn:hover { background: rgba(255,255,255,.25); }
+    .slot-btn.rec { background: rgba(192,57,43,.8); }
+    .slot-btn.rec-stop { background: rgba(192,57,43,1); animation: pulse-rec 1s infinite; }
+    @keyframes pulse-rec { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .slot-top { position: absolute; top: 4px; left: 6px; right: 6px; display: flex; align-items: center; gap: 4px; }
+    .slot-num { font-size: 9px; color: rgba(255,255,255,.5); }
+
+    .slot-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--text-muted); user-select: none; }
+    .slot-empty .plus { font-size: 28px; opacity: .3; }
+    .slot-empty .hint { font-size: 10px; letter-spacing: .5px; }
+    .slot-loading { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--text-muted); }
+    .slot-error { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--red); font-size: 11px; text-align: center; padding: 8px; }
+
+    .sidebar-right {
+      background: var(--bg-card); border-left: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    .ptz-panel { padding: 12px; border-bottom: 1px solid var(--border); }
+    .ptz-title { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+    .ptz-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
+    .ptz-btn {
+      background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
+      border-radius: 4px; padding: 8px 0; cursor: pointer; font-size: 14px; transition: all .15s; text-align: center;
+    }
+    .ptz-btn:hover:not(:disabled) { border-color: var(--accent); background: rgba(192,57,43,.15); }
+    .ptz-btn:active:not(:disabled) { transform: scale(.93); }
+    .ptz-btn:disabled { opacity: .3; cursor: not-allowed; }
+    .ptz-btn.center { font-size: 11px; color: var(--text-muted); }
+    .ptz-zoom { display: flex; gap: 4px; }
+    .ptz-zoom .ptz-btn { flex: 1; }
+    .ptz-no { font-size: 11px; color: var(--text-muted); text-align: center; padding: 8px 0; }
+
+    .rec-panel { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .rec-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+    .rec-item { padding: 8px; margin-top: 6px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; }
+    .rec-item-name { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rec-item-meta { color: var(--text-muted); margin-top: 2px; }
+    .rec-actions { display: flex; gap: 4px; margin-top: 6px; }
+    .rec-dl, .rec-rm {
+      flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
+      border-radius: 3px; padding: 3px 0; cursor: pointer; font-size: 10px; text-align: center; transition: all .15s;
+    }
+    .rec-dl:hover { border-color: var(--green); color: var(--green); }
+    .rec-rm:hover { border-color: var(--red); color: var(--red); }
+
+    .status-bar {
+      padding: 6px 12px; border-top: 1px solid var(--border);
+      font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;
+    }
+    #status-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; box-shadow: 0 0 6px var(--green); }
+
+    .badge-admin { background: rgba(212,160,23,.15); color: var(--gold); border: 1px solid var(--gold); border-radius: 3px; font-size: 9px; padding: 1px 6px; font-weight: 700; letter-spacing: 1px; }
+    .badge-super { background: rgba(192,57,43,.15); color: var(--accent); border-color: var(--accent); }
+
+    @media (max-width: 768px) {
+      .main { grid-template-columns: 1fr; }
+      .sidebar-right { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="topbar-logo">
+      <img src="/assets/Logo.jpeg" alt="P4US" id="topbar-logo-img">
+      <div>
+        <div class="name">P4US</div>
+        <div class="sub">CCTV MONITORING</div>
+      </div>
+    </div>
+    <div class="topbar-sep"></div>
+    <div class="topbar-info" id="topbar-stats">Memuat data…</div>
+    <div class="topbar-user">
+      <span id="user-name">—</span>
+      <span id="user-badge" class="badge-admin" style="display:none">ADMIN</span>
+      <button class="btn-sm" id="btn-logout">Keluar</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="center">
+      <div class="map-panel">
+        <div id="map"></div>
+        <div class="map-filter">
+          <button class="filter-btn active" id="filter-all" data-filter="all">Semua</button>
+          <button class="filter-btn" id="filter-online" data-filter="online">● Online</button>
+          <button class="filter-btn" id="filter-offline" data-filter="offline">● Offline</button>
+        </div>
+        <div class="map-search">
+          <input type="text" id="map-search-input" placeholder="🔍 Cari nama CCTV…" autocomplete="off">
+          <div class="map-search-results" id="map-search-results"></div>
+        </div>
+        <div class="map-overlay">
+          <span class="map-stat"><span class="dot dot-live"></span><span id="stat-live">—</span> online</span>
+          <span class="map-stat"><span class="dot dot-dead"></span><span id="stat-dead">—</span> offline</span>
+          <span class="map-stat"><span class="dot dot-unknown"></span><span id="stat-slow">—</span> perlu cek</span>
+        </div>
+        <div class="map-hint" id="map-hint">Klik titik CCTV di peta untuk menampilkan di grid</div>
+      </div>
+
+      <div class="grid-panel">
+        <div class="grid-toolbar">
+          <span>Grid:</span>
+          <button class="grid-size-btn active" id="btn-grid-4">4</button>
+          <button class="grid-size-btn" id="btn-grid-8">8</button>
+          <div style="flex:1"></div>
+          <button class="btn-sm" id="btn-clear-all">Kosongkan Semua</button>
+        </div>
+        <div class="video-grid grid-4" id="video-grid"></div>
+      </div>
+    </div>
+
+    <aside class="sidebar-right">
+      <div class="sidebar-header">Kontrol</div>
+      <div class="ptz-panel">
+        <div class="ptz-title">PTZ – <span id="ptz-cam-name">—</span></div>
+        <div id="ptz-no" class="ptz-no">Pilih kamera aktif terlebih dahulu</div>
+        <div id="ptz-controls" style="display:none">
+          <div class="ptz-grid">
+            <div></div>
+            <button class="ptz-btn" id="ptz-up">▲</button>
+            <div></div>
+            <button class="ptz-btn" id="ptz-left">◀</button>
+            <button class="ptz-btn center" id="ptz-stop">■</button>
+            <button class="ptz-btn" id="ptz-right">▶</button>
+            <div></div>
+            <button class="ptz-btn" id="ptz-down">▼</button>
+            <div></div>
+          </div>
+          <div class="ptz-zoom">
+            <button class="ptz-btn" id="ptz-zoom-in">🔍+</button>
+            <button class="ptz-btn" id="ptz-zoom-out">🔍−</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="rec-panel">
+        <div class="sidebar-header">Rekaman</div>
+        <div class="rec-list" id="rec-list">
+          <div style="padding:16px;text-align:center;font-size:11px;color:var(--text-muted)">Tidak ada rekaman</div>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div id="status-dot"></div>
+        <span id="status-text">Terhubung</span>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script src="/js/api.js?v=17"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
+<script src="/js/dashboard.js?v=17"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+# ─── Dependencies ───────────────────────────────────────────
+node_modules/
+
+# ─── Environment & secrets (JANGAN di-commit) ───────────────
+.env
+.env.local
+.env.*.local
+
+# ─── Database (berisi hash password user + data kamera) ─────
+backend/db/*.db
+backend/db/*.db-shm
+backend/db/*.db-wal
+
+# ─── FFmpeg binaries (besar, dipasang oleh installer) ───────
+ffmpeg/
+
+# ─── Rekaman video ──────────────────────────────────────────
+backend/recordings/*
+!backend/recordings/.gitkeep
+
+# ─── Katalog kamera (BERISI KREDENSIAL RTSP — JANGAN PUBLIK) ─
+catalog_*.csv
+rtsp_host_map.json
+CATALOG_SUMMARY.md
+PROOF_NO_LOGIN.txt
+streams_probe.jsonl
+deep_probe.json
+
+# ─── Session K3I cache (token) ──────────────────────────────
+*k3i-session.json
+
+# ─── Editor / OS ────────────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
