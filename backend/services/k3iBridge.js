@@ -19,6 +19,9 @@ const config = require('../config');
 const PORTAL_ORIGIN = 'https://k3i.korlantas.polri.go.id';
 const TOKEN_TTL_MS = 50 * 60_000; // refresh ~10 min before a typical 1h expiry
 const CACHE_FILE = path.join(os.tmpdir(), 'p4us-k3i-session.json');
+// Jeda minimum antar-percobaan login (berapa pun hasilnya) supaya tidak pernah
+// "mengetuk" portal beruntun, mis. saat stream K3I terus membalas 401.
+const MIN_LOGIN_INTERVAL_MS = 20_000;
 
 // Token + login-backoff state, persisted across restarts so a restart never
 // re-hammers (and keeps locked) an account the portal has temporarily rejected.
@@ -27,6 +30,7 @@ let session = { token: persisted.token, expiresAt: persisted.expiresAt };
 let cooldownUntil = persisted.cooldownUntil;
 let consecutiveFailures = persisted.consecutiveFailures;
 let inflightLogin = null;
+let lastLoginAt = 0;   // timestamp percobaan login terakhir (throttle in-memory)
 
 function loadState() {
   try {
@@ -70,6 +74,15 @@ function resetCooldown() {
   saveState();
 }
 
+// Catat kegagalan login → backoff makin lama: 30 menit × kegagalan, maks 3 jam.
+// Dipakai untuk HTTP ditolak MAUPUN error jaringan/timeout, agar portal tidak
+// terus diketuk saat sedang bermasalah (penyebab utama akun terkunci).
+function registerFailure() {
+  consecutiveFailures++;
+  cooldownUntil = Date.now() + Math.min(consecutiveFailures * 30, 180) * 60_000;
+  saveState();
+}
+
 async function login() {
   if (!isConfigured()) throw new Error('Kredensial K3I belum dikonfigurasi (.env)');
 
@@ -77,28 +90,40 @@ async function login() {
     const mins = Math.ceil(cooldownRemainingMs() / 60000);
     throw new Error(`Login K3I sedang cooldown (~${mins} menit lagi) setelah ditolak berulang`);
   }
+  // Throttle: jangan login lagi kalau barusan dicoba (hindari badai login).
+  if (Date.now() - lastLoginAt < MIN_LOGIN_INTERVAL_MS) {
+    throw new Error('Login K3I baru saja dicoba — menunggu sebentar');
+  }
+  lastLoginAt = Date.now();
 
   const url = `${config.k3i.baseUrl}/v1/auth/login`;
-  const res = await axios.post(
-    url,
-    { username: config.k3i.username, password: config.k3i.password },
-    {
-      timeout: 15000,
-      headers: { 'Content-Type': 'application/json', Origin: PORTAL_ORIGIN, Referer: `${PORTAL_ORIGIN}/login` },
-      validateStatus: (s) => s < 500,
-    }
-  );
+  let res;
+  try {
+    res = await axios.post(
+      url,
+      { username: config.k3i.username, password: config.k3i.password },
+      {
+        timeout: 15000,
+        headers: { 'Content-Type': 'application/json', Origin: PORTAL_ORIGIN, Referer: `${PORTAL_ORIGIN}/login` },
+        validateStatus: (s) => s < 500,
+      }
+    );
+  } catch (err) {
+    // Error jaringan / timeout juga dihitung gagal → kena backoff.
+    registerFailure();
+    throw new Error(`Login K3I gagal (jaringan): ${err.code || err.message}`);
+  }
 
   if (res.status !== 200) {
-    // Exponential-ish backoff: 30 min × failures, capped at 3 hours.
-    consecutiveFailures++;
-    cooldownUntil = Date.now() + Math.min(consecutiveFailures * 30, 180) * 60_000;
-    saveState();
+    registerFailure();
     throw new Error(`Login K3I ditolak (HTTP ${res.status})`);
   }
 
   const token = res.data?.data?.accessToken || res.data?.accessToken;
-  if (!token) throw new Error('Login K3I gagal: accessToken tidak ditemukan di respons');
+  if (!token) {
+    registerFailure();
+    throw new Error('Login K3I gagal: accessToken tidak ditemukan di respons');
+  }
 
   consecutiveFailures = 0;
   cooldownUntil = 0;
@@ -137,11 +162,17 @@ function setToken(token, ttlMs = 55 * 60_000) {
  * Auth headers for fetching a K3I stream. Best-effort: if login fails the
  * caller should still try the request unauthenticated (many K3I HLS streams
  * are open), so this never throws.
+ *
+ * allowLogin=false → HANYA pakai token yang sudah ada; TIDAK pernah memulai
+ * login baru. Dipakai pemeriksaan kesehatan latar agar proses otomatis tak
+ * pernah mengetuk portal K3I (mencegah akun terkunci). Login hanya terjadi saat
+ * user benar-benar membuka stream K3I atau admin melakukan sync manual.
  */
-async function getStreamHeaders() {
+async function getStreamHeaders({ allowLogin = true } = {}) {
   const headers = { Referer: `${PORTAL_ORIGIN}/`, Origin: PORTAL_ORIGIN };
   const hasToken = session.token && Date.now() < session.expiresAt;
-  if (!isConfigured() && !hasToken) return headers;
+  if (hasToken) { headers.Authorization = session.token; return headers; }
+  if (!allowLogin || !isConfigured()) return headers;
   try {
     headers.Authorization = await getToken();
   } catch {

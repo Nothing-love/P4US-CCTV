@@ -149,7 +149,15 @@ async function checkStreamHealth(url, linkType) {
   const headers = { 'User-Agent': 'P4US-CCTV-HealthCheck/1.0' };
   try {
     const host = new URL(url).hostname;
-    if (k3iBridge.isK3iHost(host)) Object.assign(headers, await k3iBridge.getStreamHeaders());
+    if (k3iBridge.isK3iHost(host)) {
+      // Pemeriksaan kesehatan TIDAK boleh memicu login K3I (cegah akun terkunci
+      // dari sisi portal). Tanpa token aktif → lewati probe dan biarkan status
+      // apa adanya (UNKNOWN), jangan ditandai DEAD. Status kamera K3I diperbarui
+      // saat sync manual atau saat user benar-benar memutar streamnya.
+      const h = await k3iBridge.getStreamHeaders({ allowLogin: false });
+      if (!h.Authorization) return { status: 'UNKNOWN', latencyMs: null };
+      Object.assign(headers, h);
+    }
   } catch {}
 
   // Timeout generous (8s) seperti kesabaran browser; latency <4s = LIVE.
