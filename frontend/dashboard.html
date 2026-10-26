@@ -192,6 +192,42 @@
     }
     #status-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; box-shadow: 0 0 6px var(--green); }
 
+    .pending-badge { background: var(--accent); color: #fff; border-radius: 9px; font-size: 9px; padding: 0 5px; margin-left: 4px; font-weight: 700; }
+
+    /* Modal verifikasi user */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.6);
+      display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px);
+    }
+    .modal {
+      width: 640px; max-width: 94vw; max-height: 82vh; display: flex; flex-direction: column;
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+    }
+    .modal-head {
+      display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
+      border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 700; color: var(--text);
+    }
+    .modal-close { background: none; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { overflow-y: auto; padding: 8px 0; }
+    .user-row {
+      display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+    .user-row.pending { background: rgba(212,160,23,.06); }
+    .user-info { flex: 1; min-width: 0; }
+    .user-info .u-name { font-size: 13px; color: var(--text); font-weight: 600; }
+    .user-info .u-meta { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .u-status { font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; text-transform: uppercase; }
+    .u-status.pending { background: rgba(212,160,23,.18); color: var(--gold); }
+    .u-status.active { background: rgba(39,174,96,.18); color: #7dff9a; }
+    .u-status.disabled { background: rgba(192,57,43,.18); color: #ff8080; }
+    .u-actions { display: flex; gap: 6px; }
+    .u-btn { border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); border-radius: 5px; padding: 5px 10px; font-size: 11px; cursor: pointer; transition: all .15s; }
+    .u-btn.ok:hover { border-color: var(--green); color: var(--green); }
+    .u-btn.no:hover { border-color: var(--red); color: #ff8080; }
+    .u-btn.off:hover { border-color: var(--yellow); color: var(--yellow); }
+
     .badge-admin { background: rgba(212,160,23,.15); color: var(--gold); border: 1px solid var(--gold); border-radius: 3px; font-size: 9px; padding: 1px 6px; font-weight: 700; letter-spacing: 1px; }
     .badge-super { background: rgba(192,57,43,.15); color: var(--accent); border-color: var(--accent); }
 
@@ -216,9 +252,21 @@
     <div class="topbar-user">
       <span id="user-name">—</span>
       <span id="user-badge" class="badge-admin" style="display:none">ADMIN</span>
+      <button class="btn-sm" id="btn-users" style="display:none">Verifikasi User <span id="user-pending-badge" class="pending-badge" style="display:none">0</span></button>
       <button class="btn-sm" id="btn-logout">Keluar</button>
     </div>
   </header>
+
+  <!-- Modal: Verifikasi Pendaftaran User (admin) -->
+  <div class="modal-backdrop" id="users-modal" style="display:none">
+    <div class="modal">
+      <div class="modal-head">
+        <span>Verifikasi Pendaftaran User</span>
+        <button class="modal-close" id="btn-users-close">✕</button>
+      </div>
+      <div class="modal-body" id="users-list"></div>
+    </div>
+  </div>
 
   <div class="main">
     <div class="center">
@@ -292,9 +340,9 @@
   </div>
 </div>
 
-<script src="/js/api.js?v=18"></script>
+<script src="/js/api.js?v=20"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
-<script src="/js/dashboard.js?v=18"></script>
+<script src="/js/dashboard.js?v=20"></script>
 </body>
 </html>

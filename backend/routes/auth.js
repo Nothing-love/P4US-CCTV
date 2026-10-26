@@ -184,7 +184,11 @@ router.patch('/users/:id', authenticate, requireRole('superadmin', 'admin'), (re
 
   const updates = [];
   const params = [];
-  if (status && ['pending', 'active', 'disabled'].includes(status)) { updates.push('status = ?'); params.push(status); }
+  if (status && ['pending', 'active', 'disabled'].includes(status)) {
+    updates.push('status = ?'); params.push(status);
+    // Admin approval doubles as email verification (works without SMTP).
+    if (status === 'active') updates.push('email_verified = 1');
+  }
   if (role && ['admin', 'viewer'].includes(role) && req.user.role === 'superadmin') { updates.push('role = ?'); params.push(role); }
 
   if (updates.length === 0) return res.status(400).json({ error: 'No valid fields to update' });
@@ -194,6 +198,17 @@ router.patch('/users/:id', authenticate, requireRole('superadmin', 'admin'), (re
   db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
   res.json({ message: 'User updated' });
+});
+
+// DELETE /api/auth/users/:id  (reject / remove a registration)
+router.delete('/users/:id', authenticate, requireRole('superadmin', 'admin'), (req, res) => {
+  const db = getDb();
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.role === 'superadmin') return res.status(403).json({ error: 'Tidak bisa menghapus superadmin' });
+  if (user.id === req.user.id) return res.status(400).json({ error: 'Tidak bisa menghapus akun sendiri' });
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+  res.json({ message: 'User dihapus' });
 });
 
 // POST /api/auth/change-password

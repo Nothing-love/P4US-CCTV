@@ -24,6 +24,10 @@ async function init() {
     const badge = document.getElementById('user-badge');
     if (user.role === 'superadmin') { badge.style.display = ''; badge.textContent = 'SUPERADMIN'; badge.classList.add('badge-super'); }
     else if (user.role === 'admin') { badge.style.display = ''; badge.textContent = 'ADMIN'; }
+    if (user.role === 'admin' || user.role === 'superadmin') {
+      document.getElementById('btn-users').style.display = '';
+      refreshPendingCount();
+    }
   }
 
   renderGrid();
@@ -252,7 +256,8 @@ function selectSearchResult(c) {
 // ─── Data Loading ─────────────────────────────────────────────────────────
 async function loadCameras(filters = {}) {
   try {
-    const params = new URLSearchParams({ limit: 6000, ...filters });
+    // Muat semua kamera (jumlah tumbuh seiring sumber baru ditambah).
+    const params = new URLSearchParams({ limit: 50000, ...filters });
     const { cameras, total } = await api.get(`/api/cameras?${params}`);
     state.cameras = cameras;
     document.getElementById('topbar-stats').textContent = `${total} kamera terdaftar`;
@@ -455,6 +460,7 @@ function mountVideoStream(idx, cam, info) {
     img.src = streamUrl + '&_auth=' + encodeURIComponent(token || '');
     img.onerror = () => { showSlotError(idx, 'MJPEG tidak dapat dimuat'); };
     slotEl.appendChild(img);
+    enableFullscreenClick(img, idx);
     renderSlotOverlay(idx, cam);
     return;
   }
@@ -517,6 +523,7 @@ function mountVideoStream(idx, cam, info) {
 
   slotEl.innerHTML = '';
   slotEl.appendChild(video);
+  enableFullscreenClick(video, idx);
 
   const top = document.createElement('div');
   top.className = 'slot-top';
@@ -543,6 +550,13 @@ function renderSlotOverlay(idx, cam) {
   const actions = document.createElement('div');
   actions.className = 'slot-actions';
 
+  const fsBtn = document.createElement('button');
+  fsBtn.className = 'slot-btn';
+  fsBtn.textContent = '⛶';
+  fsBtn.title = 'Layar penuh';
+  fsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(idx); });
+  actions.appendChild(fsBtn);
+
   if (cam.ptz_capable) {
     const ptzBtn = document.createElement('button');
     ptzBtn.className = 'slot-btn';
@@ -566,6 +580,24 @@ function renderSlotOverlay(idx, cam) {
 
   overlay.appendChild(actions);
   slotEl.appendChild(overlay);
+}
+
+// Klik video / tombol ⛶ → layar penuh.
+function toggleFullscreen(idx) {
+  const slotEl = document.getElementById(`slot-${idx}`);
+  if (!slotEl) return;
+  const target = slotEl.querySelector('video') || slotEl.querySelector('img') || slotEl;
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.();
+  } else {
+    (target.requestFullscreen || target.webkitRequestFullscreen || slotEl.requestFullscreen)?.call(target);
+  }
+}
+
+function enableFullscreenClick(el, idx) {
+  el.style.cursor = 'zoom-in';
+  el.title = 'Klik untuk layar penuh';
+  el.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(idx); });
 }
 
 function destroySlot(idx) {
@@ -822,7 +854,104 @@ function doLogout() {
   logout();
 }
 
+// ─── Verifikasi pendaftaran user (admin) ────────────────────────────────────
+async function refreshPendingCount() {
+  try {
+    const { users } = await api.get('/api/auth/users');
+    const pending = users.filter(u => u.status === 'pending').length;
+    const badge = document.getElementById('user-pending-badge');
+    badge.textContent = pending;
+    badge.style.display = pending > 0 ? '' : 'none';
+  } catch {}
+}
+
+async function openUsersModal() {
+  document.getElementById('users-modal').style.display = 'flex';
+  await loadUsers();
+}
+function closeUsersModal() {
+  document.getElementById('users-modal').style.display = 'none';
+}
+
+async function loadUsers() {
+  const list = document.getElementById('users-list');
+  list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--text-muted)">Memuat…</div>';
+  try {
+    const { users } = await api.get('/api/auth/users');
+    renderUsers(users);
+  } catch (err) {
+    list.innerHTML = `<div style="padding:16px;font-size:12px;color:#ff8080">Gagal memuat: ${escHtml(err.message)}</div>`;
+  }
+}
+
+function renderUsers(users) {
+  const list = document.getElementById('users-list');
+  list.innerHTML = '';
+  if (!users.length) {
+    list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--text-muted)">Belum ada user</div>';
+    return;
+  }
+  // Pending dulu, lalu sisanya.
+  users.sort((a, b) => (a.status === 'pending' ? -1 : 0) - (b.status === 'pending' ? -1 : 0));
+  users.forEach(u => {
+    const row = document.createElement('div');
+    row.className = 'user-row' + (u.status === 'pending' ? ' pending' : '');
+    const when = u.created_at ? new Date(u.created_at * 1000).toLocaleDateString('id-ID') : '';
+    const info = document.createElement('div');
+    info.className = 'user-info';
+    info.innerHTML = `
+      <div class="u-name">${escHtml(u.name)} <span class="u-status ${escHtml(u.status)}">${escHtml(u.status)}</span></div>
+      <div class="u-meta">${escHtml(u.email)} · ${escHtml(u.role)} · daftar ${escHtml(when)}</div>`;
+    row.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'u-actions';
+    if (u.role !== 'superadmin') {
+      if (u.status !== 'active') {
+        const ok = document.createElement('button');
+        ok.className = 'u-btn ok'; ok.textContent = '✓ Setujui';
+        ok.addEventListener('click', () => updateUser(u.id, { status: 'active' }));
+        actions.appendChild(ok);
+      }
+      if (u.status === 'active') {
+        const off = document.createElement('button');
+        off.className = 'u-btn off'; off.textContent = 'Nonaktifkan';
+        off.addEventListener('click', () => updateUser(u.id, { status: 'disabled' }));
+        actions.appendChild(off);
+      }
+      const no = document.createElement('button');
+      no.className = 'u-btn no'; no.textContent = '✕ Tolak';
+      no.addEventListener('click', () => rejectUser(u.id, u.name));
+      actions.appendChild(no);
+    }
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+}
+
+async function updateUser(id, body) {
+  try {
+    await api.patch(`/api/auth/users/${id}`, body);
+    await loadUsers();
+    refreshPendingCount();
+  } catch (err) { alert('Gagal: ' + err.message); }
+}
+
+async function rejectUser(id, name) {
+  if (!confirm(`Tolak & hapus pendaftaran "${name}"?`)) return;
+  try {
+    await api.delete(`/api/auth/users/${id}`);
+    await loadUsers();
+    refreshPendingCount();
+  } catch (err) { alert('Gagal: ' + err.message); }
+}
+
 // ─── Static event listeners (no inline handlers in HTML) ──────────────────
+document.getElementById('btn-users').addEventListener('click', openUsersModal);
+document.getElementById('btn-users-close').addEventListener('click', closeUsersModal);
+document.getElementById('users-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'users-modal') closeUsersModal();
+});
 document.getElementById('btn-logout').addEventListener('click', doLogout);
 document.getElementById('btn-clear-all').addEventListener('click', clearAllSlots);
 document.getElementById('btn-grid-4').addEventListener('click', function() { setGridSize(4, this); });

@@ -162,6 +162,17 @@ function initDatabase() {
       console.log(' Change this password immediately!');
       console.log('══════════════════════════════════════════\n');
     }
+  } else if (config.admin.password) {
+    // ADMIN_PASSWORD di .env bersifat otoritatif: samakan password superadmin
+    // dengan nilai .env pada setiap start (bisa diubah kapan saja via .env).
+    const admin = db.prepare("SELECT id, password_hash FROM users WHERE email = ? AND role = 'superadmin'")
+      .get(config.admin.email);
+    if (admin && !bcrypt.compareSync(config.admin.password, admin.password_hash)) {
+      const hash = bcrypt.hashSync(config.admin.password, 12);
+      db.prepare("UPDATE users SET password_hash = ?, status = 'active', email_verified = 1, updated_at = unixepoch() WHERE id = ?")
+        .run(hash, admin.id);
+      console.log('P4US CCTV — password superadmin disinkron dari .env (ADMIN_PASSWORD).');
+    }
   }
 
   return db;
