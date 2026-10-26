@@ -161,27 +161,41 @@ async function checkStreamHealth(url, linkType) {
   } catch {}
 
   // Timeout generous (8s) seperti kesabaran browser; latency <4s = LIVE.
+  // Hasil tiap percobaan:
+  //   'live'      → 200 + playlist terbaca (#EXTM3U)
+  //   'reachable' → host menjawab 2xx/3xx tapi playlist tak bisa diverifikasi
+  //                 (mis. jmlive.jasamarga.com balas 200 kosong karena butuh
+  //                 cookie/sesi). Host JELAS hidup → jangan divonis mati.
+  //   'fail'      → 4xx, error koneksi, atau timeout (kegagalan nyata)
   async function attempt() {
     const start = Date.now();
     try {
       const res = await axios.get(url, { timeout: 8000, headers, validateStatus: (s) => s < 500 });
       const latencyMs = Date.now() - start;
       const body = typeof res.data === 'string' ? res.data : '';
-      if (res.status === 200 && body.includes('#EXTM3U')) {
-        return { ok: true, status: latencyMs < 4000 ? 'LIVE' : 'SLOW', latencyMs };
+      if (res.status >= 200 && res.status < 300 && body.includes('#EXTM3U')) {
+        return { outcome: 'live', status: latencyMs < 4000 ? 'LIVE' : 'SLOW', latencyMs };
       }
-      return { ok: false, latencyMs };
+      if (res.status >= 200 && res.status < 400) {
+        return { outcome: 'reachable', latencyMs };
+      }
+      return { outcome: 'fail', latencyMs };
     } catch {
-      return { ok: false, latencyMs: Date.now() - start };
+      return { outcome: 'fail', latencyMs: Date.now() - start };
     }
   }
 
+  // Host yang menjawab 2xx/3xx dianggap TERJANGKAU → status akhir ikut katalog
+  // (k3i_active/access_class), bukan DEAD. DEAD hanya untuk kegagalan nyata.
   let r = await attempt();
-  if (r.ok) return { status: r.status, latencyMs: r.latencyMs };
+  if (r.outcome === 'live')      return { status: r.status, latencyMs: r.latencyMs };
+  if (r.outcome === 'reachable') return { status: 'UNKNOWN', latencyMs: r.latencyMs };
   // Coba sekali lagi sebelum menyatakan DEAD (hindari false-offline transien).
   await new Promise((res) => setTimeout(res, 800));
   r = await attempt();
-  return r.ok ? { status: r.status, latencyMs: r.latencyMs } : { status: 'DEAD', latencyMs: r.latencyMs };
+  if (r.outcome === 'live')      return { status: r.status, latencyMs: r.latencyMs };
+  if (r.outcome === 'reachable') return { status: 'UNKNOWN', latencyMs: r.latencyMs };
+  return { status: 'DEAD', latencyMs: r.latencyMs };
 }
 
 module.exports = { proxyHLS, checkStreamHealth };
