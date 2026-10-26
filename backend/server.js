@@ -52,6 +52,12 @@ app.use(helmet({
       workerSrc: ["'self'", 'blob:'],
       objectSrc: ["'none'"],
       frameAncestors: ["'self'"],
+      // Server berjalan di HTTP (tanpa TLS) di belakang IP publik. Tanpa baris
+      // ini, Helmet menambahkan "upgrade-insecure-requests" yang memaksa browser
+      // mengubah semua aset http:// menjadi https:// → gagal dimuat (CSS/logo/JS
+      // hilang). Set null untuk mematikannya. Kalau nanti dipasang HTTPS/TLS,
+      // baris ini boleh dihapus agar upgrade otomatis aktif lagi.
+      upgradeInsecureRequests: null,
     },
   },
   crossOriginEmbedderPolicy: false,
