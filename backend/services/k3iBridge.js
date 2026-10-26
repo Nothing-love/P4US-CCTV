@@ -173,16 +173,7 @@ async function getCameras() {
   return Array.isArray(env?.data) ? env.data : (Array.isArray(env) ? env : []);
 }
 
-function status() {
-  return {
-    configured: isConfigured(),
-    loggedIn: !!session.token && Date.now() < session.expiresAt,
-    cooldownMinutes: Math.ceil(cooldownRemainingMs() / 60000),
-    baseUrl: config.k3i.baseUrl,
-  };
-}
-
 module.exports = {
-  isConfigured, isK3iHost, login, getToken, invalidate, resetCooldown, setToken,
-  getStreamHeaders, getCameras, status,
+  isConfigured, isK3iHost, invalidate, resetCooldown, setToken,
+  getStreamHeaders, getCameras,
 };

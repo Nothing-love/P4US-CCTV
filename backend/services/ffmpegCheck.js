@@ -18,6 +18,4 @@ function ffmpegAvailable() {
   return cached;
 }
 
-function resetCache() { cached = null; }
-
-module.exports = { ffmpegAvailable, resetCache };
+module.exports = { ffmpegAvailable };

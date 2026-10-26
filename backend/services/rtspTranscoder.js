@@ -29,14 +29,7 @@ function sessionDir(cameraId) {
   return path.join(OUTPUT_ROOT, safeId(cameraId));
 }
 
-function isRunning(cameraId) {
-  return sessions.has(cameraId);
-}
-
-/**
- * Start (or reuse) a transcode session for a camera.
- * @returns {{ playlist: string, dir: string, reused: boolean }}
- */
+// Build the FFmpeg argument list for a transcode session.
 function buildArgs(inputUrl, dir, { rtsp, encode }) {
   const args = [];
   if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', '10000000');
@@ -167,4 +160,4 @@ process.on('exit', shutdown);
 process.on('SIGINT', () => { shutdown(); process.exit(0); });
 process.on('SIGTERM', () => { shutdown(); process.exit(0); });
 
-module.exports = { startSession, stopSession, touch, waitForPlaylist, isRunning, sessionDir, OUTPUT_ROOT };
+module.exports = { startSession, stopSession, touch, waitForPlaylist, sessionDir };

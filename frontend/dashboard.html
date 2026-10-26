@@ -84,6 +84,16 @@
       border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px;
     }
     .map-stat { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); }
+    .map-refresh {
+      background: transparent; border: 1px solid transparent; color: var(--text-muted);
+      cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 5px; margin-left: 2px;
+      border-radius: 5px; transition: color .15s, border-color .15s;
+    }
+    .map-refresh:hover { color: var(--text); border-color: var(--accent); }
+    .map-refresh:disabled { opacity: .55; cursor: default; }
+    .map-refresh .ic { display: inline-block; }
+    .map-refresh.spinning .ic { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .map-hint {
       position: absolute; bottom: 8px; left: 8px; z-index: 20;
       background: rgba(10,10,15,.82); border: 1px solid var(--border);
@@ -285,6 +295,7 @@
           <span class="map-stat"><span class="dot dot-live"></span><span id="stat-live">—</span> online</span>
           <span class="map-stat"><span class="dot dot-dead"></span><span id="stat-dead">—</span> offline</span>
           <span class="map-stat"><span class="dot dot-unknown"></span><span id="stat-slow">—</span> perlu cek</span>
+          <button class="map-refresh" id="btn-refresh-health" title="Perbarui status online/offline (cek ulang kamera di grid)"><span class="ic">⟳</span></button>
         </div>
         <div class="map-hint" id="map-hint">Klik titik CCTV di peta untuk menampilkan di grid</div>
       </div>
@@ -340,9 +351,9 @@
   </div>
 </div>
 
-<script src="/js/api.js?v=20"></script>
+<script src="/js/api.js?v=22"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
-<script src="/js/dashboard.js?v=20"></script>
+<script src="/js/dashboard.js?v=24"></script>
 </body>
 </html>

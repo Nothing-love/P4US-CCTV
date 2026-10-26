@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../db/database');
-const { authenticate, requireRole } = require('../middleware/authMiddleware');
+const { authenticate } = require('../middleware/authMiddleware');
+const { checkStreamHealth } = require('../services/streamProxy');
 
 const router = express.Router();
 
@@ -70,21 +71,6 @@ router.get('/stats', authenticate, (req, res) => {
   res.json(row);
 });
 
-// GET /api/cameras/provinces  — camera count per province
-router.get('/provinces', authenticate, (req, res) => {
-  const provinces = getDb().prepare(`
-    SELECT province_code, province_name,
-           COUNT(*) as total,
-           AVG(lat) as center_lat, AVG(lng) as center_lng,
-           SUM(CASE WHEN health_status = 'LIVE' THEN 1 ELSE 0 END) as live_count
-    FROM cameras
-    WHERE access_class != 'NOT_A_STREAM'
-    GROUP BY province_code
-    ORDER BY total DESC
-  `).all();
-  res.json({ provinces });
-});
-
 // GET /api/cameras/health  — recent health status for all cameras
 router.get('/health', authenticate, (req, res) => {
   const health = getDb().prepare(`
@@ -93,6 +79,51 @@ router.get('/health', authenticate, (req, res) => {
     WHERE last_checked IS NOT NULL
   `).all();
   res.json({ health });
+});
+
+// POST /api/cameras/health/recheck — probe ulang kamera tertentu SEKARANG.
+// Body: { ids: [...] } (maks 50). Dipakai tombol "Refresh" supaya status
+// online/offline kamera yang sedang dilihat langsung akurat tanpa menunggu
+// siklus pemeriksaan latar (30 detik).
+router.post('/health/recheck', authenticate, async (req, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? [...new Set(req.body.ids.filter(x => typeof x === 'string'))].slice(0, 50)
+    : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids (1-50) wajib diisi' });
+
+  const db = getDb();
+  const ph = ids.map(() => '?').join(',');
+  const cams = db.prepare(
+    `SELECT id, link, link_type FROM cameras WHERE id IN (${ph})`
+  ).all(...ids);
+
+  // Jangan turunkan ke DEAD kamera yang <5 menit lalu terbukti tampil di klien.
+  const update = db.prepare(`
+    UPDATE cameras SET health_status = CASE
+          WHEN ? = 'DEAD' AND client_alive_at IS NOT NULL AND (unixepoch() - client_alive_at) < 300
+          THEN health_status ELSE ? END,
+        health_latency_ms = ?, last_checked = unixepoch()
+    WHERE id = ?`);
+
+  await Promise.allSettled(cams.map(async (cam) => {
+    const { status, latencyMs } = await checkStreamHealth(cam.link, cam.link_type);
+    update.run(status, status, latencyMs, cam.id);
+  }));
+
+  const updated = db.prepare(
+    `SELECT id, health_status, health_latency_ms, (${STATUS_SQL}) as stream_status
+     FROM cameras WHERE id IN (${ph})`
+  ).all(...ids);
+  res.json({ rechecked: cams.length, updated });
+});
+
+// POST /api/cameras/:id/alive  — stream berhasil diputar klien → tandai LIVE.
+// Sumber status paling akurat: kamera yang benar-benar tampil di grid.
+router.post('/:id/alive', authenticate, (req, res) => {
+  const r = getDb().prepare(
+    "UPDATE cameras SET health_status = 'LIVE', last_checked = unixepoch(), client_alive_at = unixepoch() WHERE id = ?"
+  ).run(req.params.id);
+  res.json({ updated: r.changes > 0 });
 });
 
 // GET /api/cameras/:id

@@ -1,0 +1,5 @@
+# Pastikan skrip memakai akhir baris yang benar lintas platform.
+# Skrip shell WAJIB LF, kalau tidak gagal di server Linux ("bad interpreter").
+*.sh   text eol=lf
+# Batch file Windows memakai CRLF.
+*.bat  text eol=crlf

@@ -186,6 +186,18 @@ function updateMapData() {
     : 'Koordinat belum disinkron — jalankan Sync K3I';
 }
 
+// Stream berhasil diputar → status kamera jadi online (akurat, real-time).
+function markCameraAlive(cam) {
+  api.post(`/api/cameras/${cam.id}/alive`, {}).catch(() => {});
+  const c = state.cameras.find(x => x.id === cam.id);
+  if (c && c.stream_status !== 'online') {
+    c.health_status = 'LIVE';
+    c.stream_status = 'online';
+    updateMapData();
+    loadStats();
+  }
+}
+
 // Reusable camera popup (map click + search result).
 function showCameraPopup(info, lngLat) {
   const statusLbl = info.status === 'online' ? 'Hidup' : info.status === 'offline' ? 'Mati' : 'Perlu cek';
@@ -363,14 +375,14 @@ function selectSlot(idx) {
 }
 
 function addCameraToNextSlot(cameraId) {
-  // Prefer the active slot, else the next empty slot within the current grid.
+  // Slot yang dipilih (aktif) selalu diganti; jika tidak ada yang dipilih,
+  // pakai slot kosong berikutnya, lalu slot 0.
   let targetSlot = state.activeSlot;
-  if (targetSlot === null || targetSlot >= state.gridSize || state.slots[targetSlot] !== null) {
+  if (targetSlot === null || targetSlot >= state.gridSize) {
     targetSlot = -1;
     for (let i = 0; i < state.gridSize; i++) { if (!state.slots[i]) { targetSlot = i; break; } }
+    if (targetSlot === -1) targetSlot = 0;
   }
-  if (targetSlot === -1) targetSlot = 0; // all full → overwrite slot 0
-
   addCameraToSlot(cameraId, targetSlot);
 }
 
@@ -388,6 +400,9 @@ async function addCameraToSlot(cameraId, slotIdx) {
     const info = await api.get(`/api/stream/info/${cameraId}`);
     await api.put(`/api/cameras/slots/${slotIdx + 1}`, { cameraId });
     mountVideoStream(slotIdx, cam, info);
+    // Jika slot ini sedang aktif (mis. mengganti kamera mati), segarkan panel PTZ
+    // agar menampilkan kamera baru, bukan kamera lama.
+    if (slotIdx === state.activeSlot) updatePtzPanel(state.slots[slotIdx]);
   } catch (err) {
     showSlotError(slotIdx, err.message);
     state.slots[slotIdx] = null;
@@ -404,17 +419,43 @@ function showLoading(idx) {
   el.innerHTML = `<div class="slot-loading"><div class="spinner"></div><div style="font-size:11px;color:var(--text-muted)">Menghubungkan…</div></div>`;
 }
 
-function showSlotError(idx, msg) {
+function renderEmptySlot(idx) {
   const el = document.getElementById(`slot-${idx}`);
-  el.innerHTML = `
-    <div class="slot-error">
-      <div>⚠ Gagal memuat stream</div>
-      <div style="font-size:10px;color:var(--text-muted)">${escHtml(msg)}</div>
-    </div>
-    <div class="slot-empty" style="margin-top:4px">
-      <div class="hint" onclick="document.getElementById('slot-${idx}').querySelector('.slot-empty').style.display='none'">Klik untuk hapus</div>
-    </div>
-  `;
+  if (el) el.innerHTML = '<div class="slot-empty"><div class="plus">+</div><div class="hint">Pilih CCTV dari peta</div></div>';
+}
+
+function showSlotError(idx, msg) {
+  // Bebaskan slot supaya CCTV mati bisa diganti kamera lain.
+  const slot = state.slots[idx];
+  const cam = slot?.camera;
+  if (slot?.hls) { try { slot.hls.destroy(); } catch {} }
+  state.slots[idx] = null;
+  if (state.activeSlot === idx) { updatePtzPanel(null); }
+
+  const el = document.getElementById(`slot-${idx}`);
+  el.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'slot-error';
+  const title = document.createElement('div'); title.textContent = '⚠ Stream gagal';
+  const detail = document.createElement('div');
+  detail.style.cssText = 'font-size:10px;color:var(--text-muted);margin:4px 0 8px';
+  detail.textContent = msg;
+  box.append(title, detail);
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:6px';
+  if (cam) {
+    const retry = document.createElement('button');
+    retry.className = 'slot-btn'; retry.textContent = '⟳ Coba lagi';
+    retry.addEventListener('click', (e) => { e.stopPropagation(); addCameraToSlot(cam.id, idx); });
+    actions.appendChild(retry);
+  }
+  const clear = document.createElement('button');
+  clear.className = 'slot-btn'; clear.textContent = '✕ Kosongkan';
+  clear.addEventListener('click', (e) => { e.stopPropagation(); removeSlot(idx); });
+  actions.appendChild(clear);
+  box.appendChild(actions);
+  el.appendChild(box);
 }
 
 function mountVideoStream(idx, cam, info) {
@@ -499,15 +540,22 @@ function mountVideoStream(idx, cam, info) {
     });
     hls.loadSource(streamUrl);
     hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().catch(() => {});
+      markCameraAlive(cam);   // stream valid → tandai online (status real)
+    });
+    let netRetries = 0, mediaRecovered = false;
     hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) {
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls.startLoad();
-        } else {
-          hls.destroy();
-          showSlotError(idx, 'Stream error: ' + (data.details || 'unknown'));
-        }
+      if (!data.fatal) return;
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && netRetries < 3) {
+        netRetries++;
+        setTimeout(() => { try { hls.startLoad(); } catch {} }, 1000);
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecovered) {
+        mediaRecovered = true;
+        try { hls.recoverMediaError(); } catch { hls.destroy(); showSlotError(idx, data.details || 'media error'); }
+      } else {
+        hls.destroy();
+        showSlotError(idx, data.details || 'stream error');
       }
     });
     hlsInstance = hls;
@@ -611,14 +659,7 @@ function destroySlot(idx) {
 function removeSlot(idx) {
   destroySlot(idx);
   api.delete(`/api/cameras/slots/${idx + 1}`).catch(() => {});
-
-  const el = document.getElementById(`slot-${idx}`);
-  el.innerHTML = `
-    <div class="slot-empty">
-      <div class="plus">+</div>
-      <div class="hint">Pilih CCTV dari peta</div>
-    </div>
-  `;
+  renderEmptySlot(idx);
   if (state.activeSlot === idx) {
     state.activeSlot = null;
     updatePtzPanel(null);
@@ -829,6 +870,34 @@ function deriveStatus(c) {
   return 'unknown';
 }
 
+// ─── Refresh Health (manual) ────────────────────────────────────────────────
+// Probe ulang status kamera yang sedang tampil di grid (hasil langsung), lalu
+// tarik ulang daftar + statistik agar peta ikut diperbarui. Berguna saat sebuah
+// kamera tampil "offline" padahal sebenarnya hidup.
+async function refreshHealth() {
+  const btn = document.getElementById('btn-refresh-health');
+  if (!btn || btn.disabled) return;
+  btn.classList.add('spinning'); btn.disabled = true;
+  try {
+    const gridIds = [...new Set(
+      state.slots.filter(Boolean).map(s => s.camera?.id || s.id).filter(Boolean)
+    )];
+    if (gridIds.length) {
+      try {
+        const { updated } = await api.post('/api/cameras/health/recheck', { ids: gridIds });
+        (updated || []).forEach(u => {
+          const c = state.cameras.find(x => x.id === u.id);
+          if (c) { c.health_status = u.health_status; c.health_latency_ms = u.health_latency_ms; c.stream_status = u.stream_status; }
+        });
+      } catch (err) { console.warn('recheck:', err.message); }
+    }
+    // Tarik ulang seluruh daftar + statistik (mengambil hasil cek terbaru).
+    await loadCameras();
+  } finally {
+    btn.classList.remove('spinning'); btn.disabled = false;
+  }
+}
+
 // ─── Utils ────────────────────────────────────────────────────────────────
 function escHtml(str) {
   if (!str) return '';
@@ -960,6 +1029,7 @@ document.getElementById('topbar-logo-img').addEventListener('error', function() 
 document.getElementById('filter-all').addEventListener('click', function() { setStatusFilter('all', this); });
 document.getElementById('filter-online').addEventListener('click', function() { setStatusFilter('online', this); });
 document.getElementById('filter-offline').addEventListener('click', function() { setStatusFilter('offline', this); });
+document.getElementById('btn-refresh-health').addEventListener('click', refreshHealth);
 
 const mapSearchInput = document.getElementById('map-search-input');
 mapSearchInput.addEventListener('input', function() { onMapSearch(this.value); });

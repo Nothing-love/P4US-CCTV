@@ -99,6 +99,7 @@ function initDatabase() {
   // Migration: add category + K3I active-status columns to pre-existing databases
   try { db.exec('ALTER TABLE cameras ADD COLUMN category TEXT'); } catch { /* already exists */ }
   try { db.exec('ALTER TABLE cameras ADD COLUMN k3i_active INTEGER'); } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE cameras ADD COLUMN client_alive_at INTEGER'); } catch { /* already exists */ }
 
   // Migration: widen the slot range from 1-6 to 1-8 (grid now supports 8).
   const slotSchema = db.prepare("SELECT sql FROM sqlite_master WHERE name='user_camera_slots'").get();

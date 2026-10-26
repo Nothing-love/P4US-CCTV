@@ -15,14 +15,18 @@ if (fs.existsSync(envPath)) {
 
 const secret = () => crypto.randomBytes(48).toString('hex');
 
+// Port bisa diatur lewat env GEN_PORT atau argumen pertama (dipakai installer
+// server/PM2 untuk port 6969). Default 3000 untuk pemakaian lokal.
+const PORT = String(process.env.GEN_PORT || process.argv[2] || '3000').trim();
+
 const contents = [
-  'PORT=3000',
+  `PORT=${PORT}`,
   'NODE_ENV=production',
   `JWT_SECRET=${secret()}`,
   `REFRESH_TOKEN_SECRET=${secret()}`,
   'ADMIN_EMAIL=admin@p4us.local',
   'RECORDINGS_DIR=./backend/recordings',
-  'ALLOWED_ORIGINS=http://localhost:3000',
+  `ALLOWED_ORIGINS=http://localhost:${PORT}`,
   '',
   '# K3I Korlantas operator bridge — isi dengan kredensial operator Anda',
   'K3I_BASE_URL=https://k3i.korlantas.polri.go.id/api/web',

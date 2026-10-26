@@ -39,22 +39,6 @@ async function detectCodec(link) {
 }
 
 // ─── K3I Korlantas bridge ────────────────────────────────────────────────────
-// GET /api/stream/k3i/status — is the bridge configured / logged in?
-router.get('/k3i/status', authenticate, (req, res) => {
-  res.json(k3iBridge.status());
-});
-
-// GET /api/stream/k3i/cameras — (admin) raw K3I camera list for inspection
-router.get('/k3i/cameras', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
-  if (!k3iBridge.isConfigured()) return res.status(400).json({ error: 'K3I belum dikonfigurasi' });
-  try {
-    const all = await k3iBridge.getCameras();
-    res.json({ count: all.length, sample: all.slice(0, 2) });
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
-});
-
 // POST /api/stream/k3i/sync — (admin) pull the live camera list from K3I and
 // refresh real GPS coordinates, live status, and stream links in the DB.
 router.post('/k3i/sync', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
@@ -95,11 +79,6 @@ router.use('/transcode', createRateLimiter(60_000, 600, 'Stream rate limit excee
 // GET /api/stream/hls?url=ENCODED_URL
 // Proxies HLS playlist (.m3u8) and segments (.ts) through backend to avoid CORS
 router.get('/hls', authenticate, proxyHLS);
-
-// GET /api/stream/capabilities — report whether RTSP transcoding is available
-router.get('/capabilities', authenticate, (req, res) => {
-  res.json({ ffmpeg: ffmpegAvailable(), rtspTranscode: ffmpegAvailable() });
-});
 
 // ─── Live transcode → HLS (H.264) ───────────────────────────────────────────
 // Handles both RTSP sources and HLS sources whose codec the browser can't
@@ -218,13 +197,13 @@ router.get('/info/:cameraId', authenticate, async (req, res) => {
       // CORS-open source (Bali Tower): play directly for minimal buffering,
       // but transcode when the codec is HEVC (browsers can't decode it).
       const codec = await detectCodec(camera.link);
-      if (codec === 'h265' && ffmpegAvailable()) {
-        streamUrl = transcodeUrl;          // H.265 → FFmpeg → H.264
-        playerType = 'hls';
+      if (codec === 'h265') {
+        // HEVC tak bisa diputar hls.js → transcode; tanpa FFmpeg beri tahu.
+        if (ffmpegAvailable()) { streamUrl = transcodeUrl; }
+        else { streamUrl = null; playerType = 'rtsp'; }
       } else {
-        streamUrl = camera.link;           // H.264 / unknown → direct
+        streamUrl = camera.link;           // H.264 / unknown → direct (buffering minimal)
         direct = true;
-        playerType = 'hls';
       }
     } else {
       streamUrl = `${host}/api/stream/hls?url=${encodeURIComponent(camera.link)}`;

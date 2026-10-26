@@ -142,36 +142,38 @@ async function proxyHLS(req, res) {
 
 async function checkStreamHealth(url, linkType) {
   if (!url) return { status: 'UNKNOWN', latencyMs: null };
-
-  const start = Date.now();
-  try {
-    if (linkType === 'M3U8' || linkType === 'HLS') {
-      const headers = { 'User-Agent': 'P4US-CCTV-HealthCheck/1.0' };
-      try {
-        const host = new URL(url).hostname;
-        if (k3iBridge.isK3iHost(host)) Object.assign(headers, await k3iBridge.getStreamHeaders());
-      } catch {}
-      const res = await axios.get(url, {
-        timeout: 5000,
-        headers,
-        validateStatus: (s) => s < 500,
-      });
-      const latencyMs = Date.now() - start;
-      if (res.status === 200 && res.data?.includes('#EXTM3U')) {
-        return { status: latencyMs < 2000 ? 'LIVE' : 'SLOW', latencyMs };
-      }
-      return { status: 'DEAD', latencyMs };
-    }
-
-    if (linkType === 'WSS') {
-      // Cannot easily check WSS from Node without ws library; mark as UNKNOWN
-      return { status: 'UNKNOWN', latencyMs: null };
-    }
-
-    return { status: 'UNKNOWN', latencyMs: null };
-  } catch {
-    return { status: 'DEAD', latencyMs: Date.now() - start };
+  if (linkType !== 'M3U8' && linkType !== 'HLS') {
+    return { status: 'UNKNOWN', latencyMs: null }; // WSS/RTSP/etc not probed here
   }
+
+  const headers = { 'User-Agent': 'P4US-CCTV-HealthCheck/1.0' };
+  try {
+    const host = new URL(url).hostname;
+    if (k3iBridge.isK3iHost(host)) Object.assign(headers, await k3iBridge.getStreamHeaders());
+  } catch {}
+
+  // Timeout generous (8s) seperti kesabaran browser; latency <4s = LIVE.
+  async function attempt() {
+    const start = Date.now();
+    try {
+      const res = await axios.get(url, { timeout: 8000, headers, validateStatus: (s) => s < 500 });
+      const latencyMs = Date.now() - start;
+      const body = typeof res.data === 'string' ? res.data : '';
+      if (res.status === 200 && body.includes('#EXTM3U')) {
+        return { ok: true, status: latencyMs < 4000 ? 'LIVE' : 'SLOW', latencyMs };
+      }
+      return { ok: false, latencyMs };
+    } catch {
+      return { ok: false, latencyMs: Date.now() - start };
+    }
+  }
+
+  let r = await attempt();
+  if (r.ok) return { status: r.status, latencyMs: r.latencyMs };
+  // Coba sekali lagi sebelum menyatakan DEAD (hindari false-offline transien).
+  await new Promise((res) => setTimeout(res, 800));
+  r = await attempt();
+  return r.ok ? { status: r.status, latencyMs: r.latencyMs } : { status: 'DEAD', latencyMs: r.latencyMs };
 }
 
 module.exports = { proxyHLS, checkStreamHealth };

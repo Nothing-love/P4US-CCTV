@@ -30,16 +30,21 @@ async function checkBatch() {
     return;
   }
 
+  // Jangan turunkan ke DEAD kamera yang <5 menit lalu terbukti tampil di klien
+  // (pemutaran browser = sumber kebenaran). Status LIVE/SLOW tetap diterapkan.
   const update = db.prepare(`
     UPDATE cameras
-    SET health_status = ?, health_latency_ms = ?, last_checked = unixepoch()
+    SET health_status = CASE
+          WHEN ? = 'DEAD' AND client_alive_at IS NOT NULL AND (unixepoch() - client_alive_at) < 300
+          THEN health_status ELSE ? END,
+        health_latency_ms = ?, last_checked = unixepoch()
     WHERE id = ?
   `);
 
   const results = await Promise.allSettled(
     cameras.map(async (cam) => {
       const { status, latencyMs } = await checkStreamHealth(cam.link, cam.link_type);
-      update.run(status, latencyMs, cam.id);
+      update.run(status, status, latencyMs, cam.id);
     })
   );
 
@@ -58,8 +63,4 @@ function startHealthChecker() {
   }, 5000);
 }
 
-function stopHealthChecker() {
-  if (timer) { clearInterval(timer); timer = null; }
-}
-
-module.exports = { startHealthChecker, stopHealthChecker };
+module.exports = { startHealthChecker };
