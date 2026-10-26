@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 const { authenticate, requireRole } = require('../middleware/authMiddleware');
 const { proxyHLS } = require('../services/streamProxy');
 const { createRateLimiter } = require('../middleware/rateLimiter');
@@ -10,6 +11,32 @@ const transcoder = require('../services/rtspTranscoder');
 const k3iBridge = require('../services/k3iBridge');
 
 const router = express.Router();
+
+// Hosts that send CORS "*" so the browser can fetch HLS directly (no proxy hop
+// = minimal buffering). Bali Tower is one such source.
+function isCorsOpenHost(host) {
+  return /(^|\.)balitower\.co\.id$/i.test(host || '');
+}
+
+// Detect the master-playlist video codec (cached). 'h264' plays natively in the
+// browser; 'h265' (HEVC) must be transcoded.
+const codecCache = new Map();
+async function detectCodec(link) {
+  if (codecCache.has(link)) return codecCache.get(link);
+  let codec = 'unknown';
+  try {
+    const r = await axios.get(link, {
+      timeout: 8000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; P4US-CCTV/1.0)' },
+      validateStatus: (s) => s < 500,
+    });
+    const body = String(r.data || '');
+    if (/avc1/i.test(body)) codec = 'h264';          // prefer H.264 if present
+    else if (/hvc1|hev1/i.test(body)) codec = 'h265';
+  } catch { /* leave unknown */ }
+  codecCache.set(link, codec);
+  return codec;
+}
 
 // ─── K3I Korlantas bridge ────────────────────────────────────────────────────
 // GET /api/stream/k3i/status — is the bridge configured / logged in?
@@ -63,7 +90,7 @@ router.post('/k3i/token', authenticate, requireRole('admin', 'superadmin'), asyn
 
 // Lightweight rate limit for stream proxy (per IP)
 router.use('/hls', createRateLimiter(60_000, 300, 'Stream proxy rate limit exceeded'));
-router.use('/rtsp', createRateLimiter(60_000, 600, 'Stream rate limit exceeded'));
+router.use('/transcode', createRateLimiter(60_000, 600, 'Stream rate limit exceeded'));
 
 // GET /api/stream/hls?url=ENCODED_URL
 // Proxies HLS playlist (.m3u8) and segments (.ts) through backend to avoid CORS
@@ -74,17 +101,17 @@ router.get('/capabilities', authenticate, (req, res) => {
   res.json({ ffmpeg: ffmpegAvailable(), rtspTranscode: ffmpegAvailable() });
 });
 
-// ─── RTSP → HLS live transcode ──────────────────────────────────────────────
-// GET /api/stream/rtsp/:cameraId/index.m3u8  → starts/reuses ffmpeg, serves playlist
-// GET /api/stream/rtsp/:cameraId/:segment.ts → serves generated segments
-router.get('/rtsp/:cameraId/:file', authenticate, async (req, res) => {
+// ─── Live transcode → HLS (H.264) ───────────────────────────────────────────
+// Handles both RTSP sources and HLS sources whose codec the browser can't
+// decode (e.g. Bali Tower H.265). FFmpeg outputs browser-friendly H.264 HLS.
+// GET /api/stream/transcode/:cameraId/index.m3u8   → playlist
+// GET /api/stream/transcode/:cameraId/:segment.ts  → segment
+router.get('/transcode/:cameraId/:file', authenticate, async (req, res) => {
   const { cameraId, file } = req.params;
 
-  // Only allow the expected generated filenames (no traversal).
   if (!/^(index\.m3u8|seg_\d{3}\.ts)$/.test(file)) {
     return res.status(400).json({ error: 'Invalid file' });
   }
-
   if (!ffmpegAvailable()) {
     return res.status(503).json({ error: 'FFmpeg tidak terpasang di server' });
   }
@@ -93,20 +120,21 @@ router.get('/rtsp/:cameraId/:file', authenticate, async (req, res) => {
     'SELECT id, link, link_type FROM cameras WHERE id = ?'
   ).get(cameraId);
   if (!camera) return res.status(404).json({ error: 'Camera not found' });
-  if ((camera.link_type || '').toUpperCase() !== 'RTSP') {
-    return res.status(400).json({ error: 'Camera is not RTSP' });
-  }
-  if (!/^rtsp:\/\//i.test(camera.link)) {
-    return res.status(400).json({ error: 'Invalid RTSP link' });
+
+  const lt = (camera.link_type || '').toUpperCase();
+  const isRtsp = lt === 'RTSP' && /^rtsp:\/\//i.test(camera.link);
+  const isHls = (lt === 'M3U8' || lt === 'HLS') && /^https?:\/\//i.test(camera.link);
+  if (!isRtsp && !isHls) {
+    return res.status(400).json({ error: 'Sumber tidak bisa di-transcode' });
   }
 
-  // Start (or reuse) the transcode session and wait for the first playlist.
   if (file === 'index.m3u8') {
-    transcoder.startSession(cameraId, camera.link);
+    // RTSP: try stream-copy first. HLS here = codec browser can't play → re-encode.
+    transcoder.startSession(cameraId, camera.link, { rtsp: isRtsp, encode: isHls });
     const ready = await transcoder.waitForPlaylist(cameraId);
     if (!ready) {
       transcoder.stopSession(cameraId);
-      return res.status(504).json({ error: 'Stream RTSP gagal dimulai (timeout)' });
+      return res.status(504).json({ error: 'Stream gagal dimulai (timeout)' });
     }
   } else {
     transcoder.touch(cameraId);
@@ -168,11 +196,10 @@ router.get('/mjpeg', authenticate, async (req, res) => {
   }
 });
 
-// GET /api/stream/info/:cameraId
-// Returns the proxied stream URL for a camera
-router.get('/info/:cameraId', authenticate, (req, res) => {
+// GET /api/stream/info/:cameraId — resolves how a camera should be played.
+router.get('/info/:cameraId', authenticate, async (req, res) => {
   const camera = getDb().prepare(`
-    SELECT id, name, link, link_type, access_class, health_status
+    SELECT id, name, link, link_type, host, access_class, health_status
     FROM cameras WHERE id = ?
   `).get(req.params.cameraId);
 
@@ -180,13 +207,28 @@ router.get('/info/:cameraId', authenticate, (req, res) => {
 
   const host = `${req.protocol}://${req.get('host')}`;
   const linkType = (camera.link_type || '').toUpperCase();
+  const transcodeUrl = `${host}/api/stream/transcode/${encodeURIComponent(camera.id)}/index.m3u8`;
 
   let streamUrl = null;
   let playerType = 'hls';
+  let direct = false;
 
   if (linkType === 'M3U8' || linkType === 'HLS') {
-    streamUrl = `${host}/api/stream/hls?url=${encodeURIComponent(camera.link)}`;
-    playerType = 'hls';
+    if (isCorsOpenHost(camera.host)) {
+      // CORS-open source (Bali Tower): play directly for minimal buffering,
+      // but transcode when the codec is HEVC (browsers can't decode it).
+      const codec = await detectCodec(camera.link);
+      if (codec === 'h265' && ffmpegAvailable()) {
+        streamUrl = transcodeUrl;          // H.265 → FFmpeg → H.264
+        playerType = 'hls';
+      } else {
+        streamUrl = camera.link;           // H.264 / unknown → direct
+        direct = true;
+        playerType = 'hls';
+      }
+    } else {
+      streamUrl = `${host}/api/stream/hls?url=${encodeURIComponent(camera.link)}`;
+    }
   } else if (linkType === 'MJPEG') {
     streamUrl = `${host}/api/stream/mjpeg?url=${encodeURIComponent(camera.link)}`;
     playerType = 'mjpeg';
@@ -195,17 +237,13 @@ router.get('/info/:cameraId', authenticate, (req, res) => {
     playerType = 'wss';
   } else if (linkType === 'RTSP') {
     if (ffmpegAvailable()) {
-      // Transcode RTSP → HLS live via FFmpeg
-      streamUrl = `${host}/api/stream/rtsp/${encodeURIComponent(camera.id)}/index.m3u8`;
+      streamUrl = transcodeUrl;            // RTSP → FFmpeg → H.264 HLS
       playerType = 'hls';
     } else {
-      streamUrl = null;
       playerType = 'rtsp';
     }
   } else if (linkType === 'HTTP' || linkType === 'HTTPS') {
-    // Try to proxy as generic stream
     streamUrl = `${host}/api/stream/hls?url=${encodeURIComponent(camera.link)}`;
-    playerType = 'hls';
   }
 
   res.json({
@@ -214,6 +252,7 @@ router.get('/info/:cameraId', authenticate, (req, res) => {
     streamUrl,
     linkType: camera.link_type,
     playerType,
+    direct,
     health: camera.health_status,
     directUrl: camera.link,
     accessClass: camera.access_class,

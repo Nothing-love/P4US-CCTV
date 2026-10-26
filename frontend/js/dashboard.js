@@ -413,7 +413,7 @@ function showSlotError(idx, msg) {
 }
 
 function mountVideoStream(idx, cam, info) {
-  const { streamUrl, playerType, linkType, directUrl, accessClass } = info;
+  const { streamUrl, playerType, linkType, directUrl, accessClass, direct } = info;
   const slotEl = document.getElementById(`slot-${idx}`);
 
   // ── RTSP: tidak bisa diputar di browser tanpa FFmpeg ──
@@ -481,12 +481,14 @@ function mountVideoStream(idx, cam, info) {
       backBufferLength: 8,
       startLevel: -1,
       debug: false,
-      // RTSP transcode can take a few seconds to produce the first playlist.
+      // Transcode can take a few seconds to produce the first playlist.
       manifestLoadingTimeOut: 25000,
       manifestLoadingMaxRetry: 3,
       manifestLoadingRetryDelay: 2000,
+      // Direct (CORS-open) streams are fetched straight from the source, so
+      // don't attach our own Authorization header; only proxied URLs need it.
       xhrSetup(xhr) {
-        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        if (!direct && token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       },
     });
     hls.loadSource(streamUrl);

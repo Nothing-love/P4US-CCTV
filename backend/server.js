@@ -36,10 +36,14 @@ app.use(helmet({
         '*.basemaps.cartocdn.com', '*.cartocdn.com',
         '*.google.com', 'mt0.google.com', 'mt1.google.com', 'mt2.google.com', 'mt3.google.com',
       ],
-      mediaSrc: ["'self'", 'blob:', '*.k3i-korlantas.id', '*.jasamarga.com', '*.go.id'],
+      mediaSrc: [
+        "'self'", 'blob:', '*.k3i-korlantas.id', '*.jasamarga.com', '*.go.id',
+        'https://cctv.balitower.co.id:8011', 'https://*.balitower.co.id:8011',
+      ],
       connectSrc: [
         "'self'", 'blob:', 'data:',
         '*.k3i-korlantas.id', '*.jasamarga.com', '*.go.id',
+        'https://cctv.balitower.co.id:8011', 'https://*.balitower.co.id:8011',
         '*.basemaps.cartocdn.com', '*.cartocdn.com',
         '*.google.com', 'fonts.openmaptiles.org',
         'wss:', 'ws:',

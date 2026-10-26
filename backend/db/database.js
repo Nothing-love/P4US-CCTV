@@ -123,6 +123,7 @@ function initDatabase() {
   // instansi (Korlantas / Jasa Marga / Pemda / IP langsung) instead of host.
   db.exec(`
     UPDATE cameras SET category = CASE
+      WHEN host = 'cctv.balitower.co.id' OR owner LIKE '%Bali Tower%' THEN 'Bali Tower (Jakarta)'
       WHEN owner LIKE '%Korlantas%' THEN 'Korlantas'
       WHEN owner LIKE '%Jasa Marga%' THEN 'Jasa Marga'
       WHEN owner LIKE '%Dishub%' OR owner LIKE '%Pemda%' OR owner LIKE '%.go.id%'
