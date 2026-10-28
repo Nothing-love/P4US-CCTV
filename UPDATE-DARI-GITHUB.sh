@@ -76,16 +76,19 @@ fi
 
 # 3. Reload / start aplikasi di PM2 (migrasi DB jalan otomatis saat start).
 mkdir -p "$LOGDIR"
-if command -v pm2 >/dev/null 2>&1 && pm2 describe "$APP" >/dev/null 2>&1; then
-  log "Reload PM2 ($APP)..."
-  pm2 reload ecosystem.config.js --update-env >>"$LOG" 2>&1
-elif command -v pm2 >/dev/null 2>&1; then
-  log "PM2 belum menjalankan $APP — start..."
-  pm2 start ecosystem.config.js --update-env >>"$LOG" 2>&1
-  pm2 save >>"$LOG" 2>&1 || true
+# PM2 bisa global, lokal (node_modules/.bin), atau lewat npx. Deteksi otomatis
+# supaya jalan di server yang memakai 'npx pm2'.
+if command -v pm2 >/dev/null 2>&1; then PM2="pm2"
+elif [ -x "node_modules/.bin/pm2" ]; then PM2="node_modules/.bin/pm2"
+else PM2="npx pm2"; fi
+
+if $PM2 describe "$APP" >/dev/null 2>&1; then
+  log "Reload PM2 ($APP) via '$PM2'..."
+  $PM2 reload ecosystem.config.js --update-env >>"$LOG" 2>&1
 else
-  log "[!] PM2 tidak terpasang. Jalankan dulu INSTALL-SERVER-PM2.sh."
-  exit 1
+  log "PM2 belum menjalankan $APP — start via '$PM2'..."
+  $PM2 start ecosystem.config.js --update-env >>"$LOG" 2>&1
+  $PM2 save >>"$LOG" 2>&1 || true
 fi
 
 log "=== Selesai. Website kini di versi ${REMOTE:0:7}. ==="

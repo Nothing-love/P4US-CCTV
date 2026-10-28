@@ -84,13 +84,18 @@ fi
 
 # --- 6. Jalankan via PM2 ------------------------------------------------------
 echo "[6/6] Menjalankan via PM2..."
-if ! command -v pm2 >/dev/null 2>&1; then
-  echo "      Memasang PM2 global..."
-  npm install -g pm2
+# Pasang PM2 global bila bisa; kalau gagal (tanpa sudo) tetap jalan via npx.
+if ! command -v pm2 >/dev/null 2>&1 && [ ! -x "node_modules/.bin/pm2" ]; then
+  echo "      Memasang PM2..."
+  npm install -g pm2 2>/dev/null || npm install pm2
 fi
+if command -v pm2 >/dev/null 2>&1; then PM2="pm2"
+elif [ -x "node_modules/.bin/pm2" ]; then PM2="node_modules/.bin/pm2"
+else PM2="npx pm2"; fi
+echo "      Memakai: $PM2"
 mkdir -p backend/logs
-pm2 start ecosystem.config.js --update-env
-pm2 save
+$PM2 start ecosystem.config.js --update-env
+$PM2 save
 
 echo "=============================================================="
 echo "   P4US CCTV berjalan di PM2  →  http://localhost:${PORT}"
