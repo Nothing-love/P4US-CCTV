@@ -25,6 +25,74 @@ function setCache(key, data) {
   playlistCache.set(key, { data, ts: Date.now() });
 }
 
+// ── Cookie jar sesi (per-host) ──────────────────────────────────────────────
+// Sebagian sumber (mis. jmlive.jasamarga.com di balik Varnish) memakai cookie
+// sesi: request pertama balas KOSONG + Set-Cookie, konten baru keluar pada
+// request berikutnya yang menyertakan cookie itu. Browser melakukannya otomatis;
+// proxy kita harus meniru agar streamnya benar-benar keluar gambar.
+const cookieJar = new Map();           // host -> { cookie, ts }
+// Cookie sesi dipakai ulang beberapa JAM agar tak sering ambil-ulang. Bila
+// server menolaknya (balas kosong), fetchUpstream otomatis membuang & ambil
+// sesi baru. Ini cookie ANONIM (bukan login berkredensial), jadi tidak ada
+// risiko akun "terkunci" — berbeda dari login K3I.
+const COOKIE_TTL = 3 * 60 * 60_000;    // 3 jam
+function getHostCookie(host) {
+  const e = cookieJar.get(host);
+  if (e && Date.now() - e.ts < COOKIE_TTL) return e.cookie;
+  if (e) cookieJar.delete(host);
+  return null;
+}
+function storeHostCookie(host, setCookie) {
+  if (!setCookie) return;
+  const arr = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const cookie = arr.map((s) => String(s).split(';')[0]).join('; ');
+  if (cookie) cookieJar.set(host, { cookie, ts: Date.now() });
+}
+
+// GET upstream dengan penanganan cookie sesi OTOMATIS + "warm-up". Sumber ber-
+// sesi (mis. jmlive) balas KOSONG di request pertama + Set-Cookie; request
+// berikutnya dengan cookie itu baru keluar isinya. Fungsi ini menirunya, dan
+// bila cookie lama ternyata basi (balas kosong) ia buang lalu ambil sesi baru.
+async function fetchUpstream(url, { headers = {}, responseType = 'text', timeout = HTTP_TIMEOUT } = {}) {
+  const host = new URL(url).hostname;
+  const isText = responseType !== 'arraybuffer';
+  const get = (cookie) => axios.get(url, {
+    timeout, responseType, maxRedirects: 3, validateStatus: (s) => s < 500,
+    headers: cookie ? { ...headers, Cookie: cookie } : { ...headers },
+  });
+  const empty = (r) => isText && (!r.data || (typeof r.data === 'string' && r.data.trim() === ''));
+
+  let res = await get(getHostCookie(host));
+  storeHostCookie(host, res.headers['set-cookie']);
+  if (empty(res)) {
+    cookieJar.delete(host);           // buang cookie basi
+    res = await get(null);            // request bersih → picu Set-Cookie baru
+    storeHostCookie(host, res.headers['set-cookie']);
+    const fresh = getHostCookie(host);
+    if (empty(res) && fresh) {        // ulangi sekali dengan cookie baru
+      res = await get(fresh);
+      storeHostCookie(host, res.headers['set-cookie']);
+    }
+  }
+  return res;
+}
+
+// Ambil URL varian pertama dari master playlist (baris setelah #EXT-X-STREAM-INF).
+function firstVariant(body, baseUrl) {
+  const lines = String(body).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (/#EXT-X-STREAM-INF/i.test(lines[i])) {
+      for (let j = i + 1; j < lines.length; j++) {
+        const t = lines[j].trim();
+        if (t && !t.startsWith('#')) {
+          try { return new URL(t, baseUrl).href; } catch { return null; }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function buildProxyUrl(originalUrl, proxyBase) {
   return `${proxyBase}?url=${encodeURIComponent(originalUrl)}`;
 }
@@ -97,11 +165,10 @@ async function proxyHLS(req, res) {
     const k3i = k3iBridge.isK3iHost(parsedTarget.hostname);
     if (k3i) Object.assign(reqHeaders, await k3iBridge.getStreamHeaders());
 
-    const upstream = await axios.get(targetUrl, {
-      timeout: isSegment ? SEGMENT_TIMEOUT : HTTP_TIMEOUT,
-      responseType: isSegment ? 'arraybuffer' : 'text',
+    const upstream = await fetchUpstream(targetUrl, {
       headers: reqHeaders,
-      validateStatus: (s) => s < 500,
+      responseType: isSegment ? 'arraybuffer' : 'text',
+      timeout: isSegment ? SEGMENT_TIMEOUT : HTTP_TIMEOUT,
     });
 
     // On an auth failure from a K3I host, drop the cached token so the next
@@ -167,14 +234,32 @@ async function checkStreamHealth(url, linkType) {
   //                 (mis. jmlive.jasamarga.com balas 200 kosong karena butuh
   //                 cookie/sesi). Host JELAS hidup → jangan divonis mati.
   //   'fail'      → 4xx, error koneksi, atau timeout (kegagalan nyata)
+  // "online" sejati = playlist punya SEGMEN nyata (#EXTINF). Kalau master
+  // playlist, ikuti varian pertama lalu cek segmennya. Pakai cookie sesi.
   async function attempt() {
     const start = Date.now();
     try {
-      const res = await axios.get(url, { timeout: 8000, headers, validateStatus: (s) => s < 500 });
+      const res = await fetchUpstream(url, { headers, responseType: 'text', timeout: 8000 });
       const latencyMs = Date.now() - start;
       const body = typeof res.data === 'string' ? res.data : '';
       if (res.status >= 200 && res.status < 300 && body.includes('#EXTM3U')) {
-        return { outcome: 'live', status: latencyMs < 4000 ? 'LIVE' : 'SLOW', latencyMs };
+        if (/#EXTINF/i.test(body)) {
+          return { outcome: 'live', status: latencyMs < 4000 ? 'LIVE' : 'SLOW', latencyMs };
+        }
+        // Master playlist → verifikasi varian pertama benar punya segmen.
+        const variant = firstVariant(body, url);
+        if (variant) {
+          try {
+            const r2 = await fetchUpstream(variant, { headers, responseType: 'text', timeout: 8000 });
+            const b2 = typeof r2.data === 'string' ? r2.data : '';
+            if (r2.status >= 200 && r2.status < 300 && /#EXTINF/i.test(b2)) {
+              const lat = Date.now() - start;
+              return { outcome: 'live', status: lat < 4000 ? 'LIVE' : 'SLOW', latencyMs: lat };
+            }
+          } catch {}
+        }
+        // Punya #EXTM3U tapi tak ada segmen terverifikasi → terjangkau, bukan LIVE.
+        return { outcome: 'reachable', latencyMs };
       }
       if (res.status >= 200 && res.status < 400) {
         return { outcome: 'reachable', latencyMs };

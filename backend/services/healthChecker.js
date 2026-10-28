@@ -5,7 +5,9 @@
 const { getDb } = require('../db/database');
 const { checkStreamHealth } = require('./streamProxy');
 
-const BATCH_SIZE = 30;
+// Batch besar supaya seluruh kamera (ribuan) tercek ulang dalam ~25 menit,
+// bukan ~80+ menit. Status jadi lebih cepat akurat (tak lama "basi").
+const BATCH_SIZE = 100;
 const INTERVAL_MS = 30_000;
 
 let offset = 0;

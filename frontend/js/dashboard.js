@@ -429,6 +429,7 @@ function showSlotError(idx, msg) {
   const slot = state.slots[idx];
   const cam = slot?.camera;
   if (slot?.hls) { try { slot.hls.destroy(); } catch {} }
+  if (slot?.stillTimer) { try { clearInterval(slot.stillTimer); } catch {} }
   state.slots[idx] = null;
   if (state.activeSlot === idx) { updatePtzPanel(null); }
 
@@ -458,8 +459,27 @@ function showSlotError(idx, msg) {
   el.appendChild(box);
 }
 
+// Jalur primer gagal → coba endpoint BACKUP (bila ada & belum dicoba); kalau
+// tetap gagal, baru tampilkan error. Memberi cadangan saat CCTV utama offline.
+function failover(idx, cam, info, msg) {
+  const slot = state.slots[idx];
+  const bk = info && info.backup;
+  if (bk && bk.streamUrl && slot && !slot.triedBackup) {
+    slot.triedBackup = true;
+    if (slot.stillTimer) { clearInterval(slot.stillTimer); slot.stillTimer = null; }
+    if (slot.hls) { try { slot.hls.destroy(); } catch {} slot.hls = null; }
+    mountVideoStream(idx, cam, {
+      streamUrl: bk.streamUrl, playerType: bk.playerType, direct: bk.direct,
+      refreshSec: bk.refreshSec, linkType: bk.linkType, directUrl: bk.directUrl,
+      accessClass: info.accessClass, backup: null,
+    });
+    return;
+  }
+  showSlotError(idx, msg);
+}
+
 function mountVideoStream(idx, cam, info) {
-  const { streamUrl, playerType, linkType, directUrl, accessClass, direct } = info;
+  const { streamUrl, playerType, linkType, directUrl, accessClass, direct, refreshSec } = info;
   const slotEl = document.getElementById(`slot-${idx}`);
 
   // ── RTSP: tidak bisa diputar di browser tanpa FFmpeg ──
@@ -494,20 +514,56 @@ function mountVideoStream(idx, cam, info) {
   if (playerType === 'mjpeg') {
     slotEl.innerHTML = '';
     const token = localStorage.getItem('p4us_token');
-    // Fetch MJPEG as blob URL with auth header
     const img = document.createElement('img');
     img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
     img.alt = cam.name;
     img.src = streamUrl + '&_auth=' + encodeURIComponent(token || '');
-    img.onerror = () => { showSlotError(idx, 'MJPEG tidak dapat dimuat'); };
+    img.onerror = () => { failover(idx, cam, info, 'MJPEG tidak dapat dimuat'); };
     slotEl.appendChild(img);
     enableFullscreenClick(img, idx);
     renderSlotOverlay(idx, cam);
     return;
   }
 
+  // ── STILL: gambar JPEG yang di-refresh berkala (lewat proxy /still) ──
+  if (playerType === 'still') {
+    slotEl.innerHTML = '';
+    const token = localStorage.getItem('p4us_token');
+    const img = document.createElement('img');
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;background:#000';
+    img.alt = cam.name;
+    const sec = Math.max(5, refreshSec || 15);
+    const authUrl = streamUrl + (streamUrl.includes('?') ? '&' : '?') + '_auth=' + encodeURIComponent(token || '');
+    const load = () => { img.src = authUrl + '&_t=' + Date.now(); };
+    let fails = 0;
+    img.onload = () => { fails = 0; markCameraAlive(cam); };
+    img.onerror = () => { if (++fails >= 2) { if (st) clearInterval(st); failover(idx, cam, info, 'Gambar tak dapat dimuat'); } };
+    load();
+    const st = setInterval(load, sec * 1000);
+    if (state.slots[idx]) state.slots[idx].stillTimer = st;
+    slotEl.appendChild(img);
+    enableFullscreenClick(img, idx);
+    renderSlotOverlay(idx, cam);
+    return;
+  }
+
+  // ── FRAME / YouTube: halaman embed resmi lewat <iframe> ──
+  if (playerType === 'frame') {
+    slotEl.innerHTML = '';
+    const ifr = document.createElement('iframe');
+    ifr.src = streamUrl;
+    ifr.style.cssText = 'width:100%;height:100%;border:0;display:block;background:#000';
+    ifr.setAttribute('allow', 'autoplay; fullscreen; encrypted-media');
+    ifr.setAttribute('allowfullscreen', '');
+    ifr.referrerPolicy = 'no-referrer';
+    slotEl.appendChild(ifr);
+    markCameraAlive(cam);
+    renderSlotOverlay(idx, cam);
+    return;
+  }
+
   if (!streamUrl) {
-    showSlotError(idx, 'Tidak ada stream URL untuk tipe ' + (linkType || '?'));
+    failover(idx, cam, info, 'Tidak ada stream URL untuk tipe ' + (linkType || '?'));
     return;
   }
 
@@ -552,10 +608,10 @@ function mountVideoStream(idx, cam, info) {
         setTimeout(() => { try { hls.startLoad(); } catch {} }, 1000);
       } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecovered) {
         mediaRecovered = true;
-        try { hls.recoverMediaError(); } catch { hls.destroy(); showSlotError(idx, data.details || 'media error'); }
+        try { hls.recoverMediaError(); } catch { hls.destroy(); failover(idx, cam, info, data.details || 'media error'); }
       } else {
         hls.destroy();
-        showSlotError(idx, data.details || 'stream error');
+        failover(idx, cam, info, data.details || 'stream error');
       }
     });
     hlsInstance = hls;
@@ -563,7 +619,7 @@ function mountVideoStream(idx, cam, info) {
     video.src = streamUrl;
     video.play().catch(() => {});
   } else {
-    showSlotError(idx, 'Browser tidak mendukung HLS');
+    failover(idx, cam, info, 'Browser tidak mendukung HLS');
     return;
   }
 
@@ -652,6 +708,7 @@ function destroySlot(idx) {
   const slot = state.slots[idx];
   if (!slot) return;
   if (slot.hls) { slot.hls.destroy(); }
+  if (slot.stillTimer) { clearInterval(slot.stillTimer); slot.stillTimer = null; }
   if (slot.recordingId) stopRecording(idx);
   state.slots[idx] = null;
 }

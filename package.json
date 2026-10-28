@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node backend/server.js",
     "dev": "nodemon backend/server.js",
-    "import-cameras": "node backend/scripts/importCameras.js"
+    "import-cameras": "node backend/scripts/importCameras.js",
+    "import-trafik": "node backend/scripts/importUnified.js",
+    "reset-health": "node backend/scripts/resetHealth.js"
   },
   "dependencies": {
     "axios": "^1.6.8",

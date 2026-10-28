@@ -36,12 +36,24 @@ if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt
 fi
 
 # --- 2. FFmpeg (opsional: RTSP/transcode & rekaman) ---------------------------
-echo "[2/6] Memeriksa FFmpeg..."
+echo "[2/6] Memasang FFmpeg (untuk RTSP/transcode H.265 & rekaman)..."
 if command -v ffmpeg >/dev/null 2>&1; then
-  echo "      FFmpeg: $(ffmpeg -version | head -n1)"
+  echo "      FFmpeg sudah ada: $(ffmpeg -version | head -n1)"
 else
-  echo "      [i] FFmpeg tidak ada — RTSP/transcode & rekaman nonaktif."
-  echo "          Pasang: sudo apt-get install -y ffmpeg"
+  echo "      FFmpeg belum ada — memasang otomatis..."
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -y && sudo apt-get install -y ffmpeg
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y ffmpeg
+  elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y ffmpeg
+  fi
+  if command -v ffmpeg >/dev/null 2>&1; then
+    echo "      FFmpeg berhasil dipasang: $(ffmpeg -version | head -n1)"
+  else
+    echo "      [!] Gagal pasang FFmpeg otomatis. Pasang manual lalu restart:"
+    echo "          sudo apt-get install -y ffmpeg   (atau paket distro Anda)"
+  fi
 fi
 
 # --- 3. Dependency Node -------------------------------------------------------

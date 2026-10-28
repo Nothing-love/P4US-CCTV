@@ -38,12 +38,12 @@ app.use(helmet({
       ],
       mediaSrc: [
         "'self'", 'blob:', '*.k3i-korlantas.id', '*.jasamarga.com', '*.go.id',
-        'https://cctv.balitower.co.id:8011', 'https://*.balitower.co.id:8011',
+        'https://*.balitower.co.id:*',
       ],
       connectSrc: [
         "'self'", 'blob:', 'data:',
         '*.k3i-korlantas.id', '*.jasamarga.com', '*.go.id',
-        'https://cctv.balitower.co.id:8011', 'https://*.balitower.co.id:8011',
+        'https://*.balitower.co.id:*',
         '*.basemaps.cartocdn.com', '*.cartocdn.com',
         '*.google.com', 'fonts.openmaptiles.org',
         'wss:', 'ws:',
@@ -52,6 +52,14 @@ app.use(helmet({
       workerSrc: ["'self'", 'blob:'],
       objectSrc: ["'none'"],
       frameAncestors: ["'self'"],
+      // Kamera tipe "frame"/YouTube ditampilkan via <iframe> ke halaman embed
+      // resmi pemilik kamera. Izinkan host-host embed tsb di frame-src.
+      frameSrc: [
+        "'self'",
+        'transcode.baliprov.go.id', 'cctv.dpuprkotang.info', 'rtsp.me',
+        'www.youtube-nocookie.com', 'youtube-nocookie.com',
+        '*.go.id', '*.gov.my',
+      ],
       // Server berjalan di HTTP (tanpa TLS) di belakang IP publik. Tanpa baris
       // ini, Helmet menambahkan "upgrade-insecure-requests" yang memaksa browser
       // mengubah semua aset http:// menjadi https:// → gagal dimuat (CSS/logo/JS

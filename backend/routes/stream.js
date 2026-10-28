@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { authenticate, requireRole } = require('../middleware/authMiddleware');
+const { authenticate, authenticateMedia, requireRole } = require('../middleware/authMiddleware');
 const { proxyHLS } = require('../services/streamProxy');
 const { createRateLimiter } = require('../middleware/rateLimiter');
 const { getDb } = require('../db/database');
@@ -175,66 +175,128 @@ router.get('/mjpeg', authenticate, async (req, res) => {
   }
 });
 
-// GET /api/stream/info/:cameraId — resolves how a camera should be played.
+// GET /api/stream/still?url=ENCODED — proxy gambar JPEG (kamera tipe 'still').
+// Menambah Referer agar lolos hotlink-protection & disajikan dari origin sendiri
+// (lolos CSP img-src 'self'). Dipanggil berulang oleh klien (cache-bust).
+router.get('/still', authenticateMedia, async (req, res) => {
+  const rawUrl = req.query.url;
+  if (!rawUrl) return res.status(400).json({ error: 'url parameter required' });
+  let targetUrl;
+  try { targetUrl = decodeURIComponent(rawUrl); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+  if (!/^https?:\/\//i.test(targetUrl)) return res.status(400).json({ error: 'Only http/https URLs allowed' });
+
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+    const h = parsed.hostname.toLowerCase();
+    if (
+      h === 'localhost' || h === '127.0.0.1' || h === '[::1]' ||
+      /^10\./.test(h) || /^192\.168\./.test(h) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^169\.254\./.test(h) || h === '0.0.0.0'
+    ) return res.status(400).json({ error: 'Private/loopback addresses not allowed' });
+  } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+  try {
+    const upstream = await axios.get(targetUrl, {
+      timeout: 10000,
+      responseType: 'arraybuffer',
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; P4US-CCTV/1.0)', Referer: `${parsed.origin}/` },
+      validateStatus: (s) => s < 500,
+    });
+    if (upstream.status !== 200) return res.status(upstream.status).end();
+    res.set({
+      'Content-Type': upstream.headers['content-type'] || 'image/jpeg',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.send(Buffer.from(upstream.data));
+  } catch {
+    res.status(502).json({ error: 'Upstream error' });
+  }
+});
+
+// Menentukan cara memutar satu link (dipakai untuk link primer DAN backup).
+async function resolveLink(base, camId, link, linkType, kind, refreshSec, camHost) {
+  const lt = (linkType || '').toUpperCase();
+  const k = (kind || 'stream').toLowerCase();
+  const transcodeUrl = `${base}/api/stream/transcode/${encodeURIComponent(camId)}/index.m3u8`;
+
+  if (k === 'still' || lt === 'STILL') {
+    return { streamUrl: `${base}/api/stream/still?url=${encodeURIComponent(link)}`, playerType: 'still', direct: false, refreshSec: refreshSec || 15 };
+  }
+  if (k === 'frame' || k === 'youtube' || lt === 'FRAME' || lt === 'YOUTUBE') {
+    return { streamUrl: link, playerType: 'frame', direct: false, refreshSec: null };
+  }
+  if (lt === 'M3U8' || lt === 'HLS') {
+    // Deteksi codec untuk SEMUA host: H.265/HEVC tak bisa didekode browser →
+    // transcode via FFmpeg bila ada, agar benar-benar keluar gambar.
+    const codec = await detectCodec(link);
+    if (codec === 'h265') {
+      if (ffmpegAvailable()) return { streamUrl: transcodeUrl, playerType: 'hls', direct: false };
+      return { streamUrl: null, playerType: 'rtsp', direct: false };   // tak bisa diputar tanpa FFmpeg
+    }
+    if (isCorsOpenHost(camHost)) return { streamUrl: link, playerType: 'hls', direct: true };
+    return { streamUrl: `${base}/api/stream/hls?url=${encodeURIComponent(link)}`, playerType: 'hls', direct: false };
+  }
+  if (lt === 'MJPEG') return { streamUrl: `${base}/api/stream/mjpeg?url=${encodeURIComponent(link)}`, playerType: 'mjpeg', direct: false };
+  if (lt === 'WSS') return { streamUrl: link, playerType: 'wss', direct: false };
+  if (lt === 'RTSP') {
+    if (ffmpegAvailable()) return { streamUrl: transcodeUrl, playerType: 'hls', direct: false };
+    return { streamUrl: null, playerType: 'rtsp', direct: false };
+  }
+  if (lt === 'HTTP' || lt === 'HTTPS') return { streamUrl: `${base}/api/stream/hls?url=${encodeURIComponent(link)}`, playerType: 'hls', direct: false };
+  return { streamUrl: null, playerType: 'hls', direct: false };
+}
+
+function backupKind(bt) {
+  const t = (bt || '').toUpperCase();
+  if (t === 'STILL') return 'still';
+  if (t === 'FRAME' || t === 'YOUTUBE') return 'frame';
+  return 'stream';
+}
+
+// GET /api/stream/info/:cameraId — resolves how a camera should be played
+// (primer + backup untuk failover).
 router.get('/info/:cameraId', authenticate, async (req, res) => {
   const camera = getDb().prepare(`
-    SELECT id, name, link, link_type, host, access_class, health_status
+    SELECT id, name, link, link_type, host, access_class, health_status,
+           backup_link, backup_link_type, endpoint_kind, refresh_sec
     FROM cameras WHERE id = ?
   `).get(req.params.cameraId);
 
   if (!camera) return res.status(404).json({ error: 'Camera not found' });
 
-  const host = `${req.protocol}://${req.get('host')}`;
-  const linkType = (camera.link_type || '').toUpperCase();
-  const transcodeUrl = `${host}/api/stream/transcode/${encodeURIComponent(camera.id)}/index.m3u8`;
+  const base = `${req.protocol}://${req.get('host')}`;
+  const primary = await resolveLink(base, camera.id, camera.link, camera.link_type,
+    camera.endpoint_kind, camera.refresh_sec, camera.host);
 
-  let streamUrl = null;
-  let playerType = 'hls';
-  let direct = false;
-
-  if (linkType === 'M3U8' || linkType === 'HLS') {
-    if (isCorsOpenHost(camera.host)) {
-      // CORS-open source (Bali Tower): play directly for minimal buffering,
-      // but transcode when the codec is HEVC (browsers can't decode it).
-      const codec = await detectCodec(camera.link);
-      if (codec === 'h265') {
-        // HEVC tak bisa diputar hls.js → transcode; tanpa FFmpeg beri tahu.
-        if (ffmpegAvailable()) { streamUrl = transcodeUrl; }
-        else { streamUrl = null; playerType = 'rtsp'; }
-      } else {
-        streamUrl = camera.link;           // H.264 / unknown → direct (buffering minimal)
-        direct = true;
-      }
-    } else {
-      streamUrl = `${host}/api/stream/hls?url=${encodeURIComponent(camera.link)}`;
-    }
-  } else if (linkType === 'MJPEG') {
-    streamUrl = `${host}/api/stream/mjpeg?url=${encodeURIComponent(camera.link)}`;
-    playerType = 'mjpeg';
-  } else if (linkType === 'WSS') {
-    streamUrl = camera.link;
-    playerType = 'wss';
-  } else if (linkType === 'RTSP') {
-    if (ffmpegAvailable()) {
-      streamUrl = transcodeUrl;            // RTSP → FFmpeg → H.264 HLS
-      playerType = 'hls';
-    } else {
-      playerType = 'rtsp';
-    }
-  } else if (linkType === 'HTTP' || linkType === 'HTTPS') {
-    streamUrl = `${host}/api/stream/hls?url=${encodeURIComponent(camera.link)}`;
+  let backup = null;
+  if (camera.backup_link) {
+    let bHost = camera.host;
+    try { bHost = new URL(camera.backup_link).hostname; } catch {}
+    const b = await resolveLink(base, camera.id + '_bk', camera.backup_link,
+      camera.backup_link_type || camera.link_type, backupKind(camera.backup_link_type),
+      camera.refresh_sec, bHost);
+    backup = {
+      streamUrl: b.streamUrl, playerType: b.playerType, direct: b.direct,
+      refreshSec: b.refreshSec, linkType: camera.backup_link_type || camera.link_type,
+      directUrl: camera.backup_link,
+    };
   }
 
   res.json({
     cameraId: camera.id,
     name: camera.name,
-    streamUrl,
+    streamUrl: primary.streamUrl,
+    playerType: primary.playerType,
+    direct: primary.direct,
+    refreshSec: primary.refreshSec,
+    endpointKind: camera.endpoint_kind,
     linkType: camera.link_type,
-    playerType,
-    direct,
-    health: camera.health_status,
     directUrl: camera.link,
     accessClass: camera.access_class,
+    health: camera.health_status,
+    backup,
   });
 });
 
