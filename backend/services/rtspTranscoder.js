@@ -49,9 +49,11 @@ function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 6000 } = {}) {
   args.push('-i', inputUrl, '-select_streams', 'v:0',
     '-show_entries', 'stream=codec_name,pix_fmt', '-of', 'default=nw=1:nk=1', '-v', 'error');
 
-  let codec = null, pixFmt = null;
+  let codec = null, pixFmt = null, authFailed = false;
   try {
     const r = spawnSync(ffprobePath, args, { timeout: timeoutMs + 3000, encoding: 'utf8' });
+    const errOut = String(r.stderr || '').toLowerCase();
+    if (/401|unauthorized|authorization failed|403/.test(errOut)) authFailed = true;
     const lines = String(r.stdout || '').trim().toLowerCase().split('\n').map((s) => s.trim()).filter(Boolean);
     // Urutan default: codec_name lalu pix_fmt.
     const raw = lines[0] || '';
@@ -62,8 +64,8 @@ function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 6000 } = {}) {
   } catch { /* ffprobe tak ada / timeout → null */ }
 
   const playable = codec === 'h264' && !!pixFmt && BROWSER_SAFE_PIXFMT.test(pixFmt);
-  const result = { codec, pixFmt, playable };
-  if (codec) codecCache.set(inputUrl, result); // cache hanya hasil positif
+  const result = { codec, pixFmt, playable, authFailed };
+  if (codec) codecCache.set(inputUrl, result); // cache hanya hasil positif (bukan auth-fail)
   return result;
 }
 
@@ -83,7 +85,11 @@ function sessionDir(cameraId) {
 function buildArgs(inputUrl, dir, { rtsp, encode }) {
   const args = [];
   // -timeout 6s: jangan menggantung lama pada kamera yang sulit dijangkau.
-  if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', '6000000');
+  // -fflags +discardcorrupt + -err_detect ignore_err: banyak kamera H.265 mulai
+  // di tengah GOP (sebelum keyframe) → "undecodable NALU/POC". Buang paket korup
+  // & abaikan error sampai keyframe pertama agar output bersih, tak macet.
+  if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', '6000000',
+    '-fflags', '+discardcorrupt', '-err_detect', 'ignore_err');
   args.push('-i', inputUrl, '-an');
   if (encode) {
     // Re-encode to H.264 (e.g. H.265 source that browsers can't decode).

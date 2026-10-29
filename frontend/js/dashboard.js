@@ -606,10 +606,12 @@ function mountVideoStream(idx, cam, info) {
     let netRetries = 0, mediaRecovered = false;
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return;
-      // 503 = server sudah memastikan kamera tak terjangkau → jangan retry,
+      // Server sudah memastikan kamera takkan keluar gambar → jangan retry,
       // langsung tampilkan pesan (hemat waktu, tak ada spinner berkepanjangan).
+      //   503 = tak terjangkau (port mati)   502 = kredensial/channel ditolak
       const code = data.response && data.response.code;
       if (code === 503) { try { hls.destroy(); } catch {} return failover(idx, cam, info, 'Kamera tidak terjangkau dari server'); }
+      if (code === 502) { try { hls.destroy(); } catch {} return failover(idx, cam, info, 'Kredensial/channel kamera ditolak (401)'); }
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR && netRetries < 2) {
         netRetries++;
         setTimeout(() => { try { hls.startLoad(); } catch {} }, 1000);

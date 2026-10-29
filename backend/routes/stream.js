@@ -130,6 +130,11 @@ router.get('/transcode/:cameraId/:file', authenticate, async (req, res) => {
       // Copy hanya bila terbukti H.264 + pix_fmt aman-browser; selain itu
       // (H.265, 4:2:2/10-bit, atau tak terdeteksi) re-encode agar tak hitam.
       const probe = transcoder.probeVideoCodec(camera.link, { rtsp: true });
+      // Kredensial/channel ditolak (401/403) → tak akan pernah keluar gambar.
+      // Fail cepat dgn pesan jelas, jangan biarkan spinner berputar.
+      if (probe.authFailed) {
+        return res.status(502).json({ error: 'Kredensial kamera ditolak (401) — cek user/sandi atau channel', code: 'AUTH_FAILED' });
+      }
       encode = !probe.playable;
     }
     transcoder.startSession(cameraId, camera.link, { rtsp: isRtsp, encode });
