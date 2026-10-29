@@ -10,6 +10,7 @@ const { ffmpegAvailable } = require('../services/ffmpegCheck');
 const transcoder = require('../services/rtspTranscoder');
 const k3iBridge = require('../services/k3iBridge');
 const jmliveResolver = require('../services/jmliveResolver');
+const k3iResolver = require('../services/k3iResolver');
 
 const router = express.Router();
 
@@ -278,11 +279,29 @@ router.get('/info/:cameraId', authenticate, async (req, res) => {
 
   if (!camera) return res.status(404).json({ error: 'Camera not found' });
 
-  // Jmlive: UUID berputar — ambil URL HLS terkini via resolver sebelum membangun respons.
-  if (camera.host === 'jmlive.jasamarga.com' && camera.jm_ruas) {
-    const freshHls = await jmliveResolver.resolveJmlive(camera.jm_ruas, camera.name);
-    if (freshHls) camera = { ...camera, link: freshHls };
-  }
+  // UUID jmlive/K3I berputar → ambil URL TERKINI sebelum membangun respons.
+  //  1) Kamera ber-ID cctv_ berasal dari K3I (id sama) → resolver K3I by-id
+  //     memberi URL terkini (jmlive/vms/RTSP). Satu panggilan melayani semua.
+  //  2) Kamera trafik.live (tl_) dengan jm_ruas → resolver trafik.live by-nama.
+  // Keduanya fallback ke URL katalog bila gagal. Link segar juga ditulis balik
+  // ke DB agar health-check & pemutaran berikutnya memakai URL benar.
+  try {
+    if (/^cctv_/.test(camera.id) &&
+        (camera.host === 'jmlive.jasamarga.com' || k3iBridge.isK3iHost(camera.host))) {
+      const fresh = await k3iResolver.resolveById(camera.id);
+      if (fresh && fresh.link && fresh.link !== camera.link) {
+        const newType = fresh.linkType || camera.link_type;
+        let newHost = camera.host;
+        try { newHost = new URL(fresh.link).hostname; } catch {}
+        getDb().prepare('UPDATE cameras SET link = ?, link_type = ?, host = ? WHERE id = ?')
+          .run(fresh.link, newType, newHost, camera.id);
+        camera = { ...camera, link: fresh.link, link_type: newType, host: newHost };
+      }
+    } else if (camera.host === 'jmlive.jasamarga.com' && camera.jm_ruas) {
+      const freshHls = await jmliveResolver.resolveJmlive(camera.jm_ruas, camera.name);
+      if (freshHls) camera = { ...camera, link: freshHls };
+    }
+  } catch { /* resolver gagal → pakai URL katalog apa adanya */ }
 
   const base = `${req.protocol}://${req.get('host')}`;
   const primary = await resolveLink(base, camera.id, camera.link, camera.link_type,
