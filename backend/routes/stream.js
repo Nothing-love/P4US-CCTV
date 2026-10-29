@@ -75,9 +75,13 @@ router.post('/k3i/token', authenticate, requireRole('superadmin'), async (req, r
   }
 });
 
-// Lightweight rate limit for stream proxy (per IP)
-router.use('/hls', createRateLimiter(60_000, 300, 'Stream proxy rate limit exceeded'));
-router.use('/transcode', createRateLimiter(60_000, 600, 'Stream rate limit exceeded'));
+// Rate limit per IP untuk proxy stream. Satu kamera HLS menembak playlist +
+// segmen tiap beberapa detik (~60 req/mnt), jadi satu pengguna yang membuka
+// 8 kamera bisa ~500+ req/mnt — limit lama (300/600) terlalu kecil dan bikin
+// stream mati ("Too many requests") setelah beberapa menit. Dilonggarkan agar
+// muat puluhan kamera, tapi tetap membendung penyalahgunaan ekstrem.
+router.use('/hls', createRateLimiter(60_000, 6000, 'Stream proxy rate limit exceeded'));
+router.use('/transcode', createRateLimiter(60_000, 6000, 'Stream rate limit exceeded'));
 
 // GET /api/stream/hls?url=ENCODED_URL
 // Proxies HLS playlist (.m3u8) and segments (.ts) through backend to avoid CORS

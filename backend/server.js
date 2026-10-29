@@ -83,7 +83,13 @@ app.use(express.urlencoded({ extended: false, limit: '512kb' }));
 
 // ─── Rate limiting ────────────────────────────────────────────────────────
 app.use('/api/auth', createRateLimiter(15 * 60_000, 30, 'Too many auth requests'));
-app.use('/api', createRateLimiter(60_000, 200));
+// Limiter global /api TIDAK berlaku untuk endpoint media streaming (hls/
+// transcode/still/mjpeg): tiap kamera HLS menembak playlist+segmen tiap
+// beberapa detik, jadi 8+ kamera mudah menembus 200/mnt → 429 "Too many
+// requests" → stream mati tiap beberapa menit. Media punya limiter longgar
+// sendiri; endpoint /api lain (auth, daftar kamera, slot) tetap dibatasi.
+const STREAM_MEDIA_RE = /^\/api\/stream\/(hls|transcode|still|mjpeg)\b/;
+app.use('/api', createRateLimiter(60_000, 200, null, (req) => STREAM_MEDIA_RE.test(req.originalUrl)));
 
 // ─── Static: Logo and other root-level assets ─────────────────────────────
 app.use('/assets', express.static(path.join(__dirname, '..'), {
