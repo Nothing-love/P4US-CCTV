@@ -8,6 +8,10 @@ let db;
 
 function initDatabase() {
   db = new DatabaseSync(path.join(__dirname, 'p4us.db'));
+  // busy_timeout DULU: bila proses lain (mis. importer berjalan bersamaan)
+  // sedang menulis, operasi ini MENUNGGU sampai 15 dtk alih-alih langsung
+  // gagal "database is locked" (SQLITE_BUSY) yang bikin server crash saat start.
+  db.exec('PRAGMA busy_timeout = 15000');
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA synchronous = NORMAL');
