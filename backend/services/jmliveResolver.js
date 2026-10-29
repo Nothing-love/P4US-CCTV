@@ -58,11 +58,4 @@ async function resolveJmlive(ruas, nama, view = 'Kamera') {
   return null;
 }
 
-/**
- * Hapus satu entri cache (dipanggil bila stream ternyata masih mati).
- */
-function invalidate(ruas, nama) {
-  cache.delete(`${ruas}|${nama}`);
-}
-
-module.exports = { resolveJmlive, invalidate };
+module.exports = { resolveJmlive };

@@ -56,11 +56,12 @@ function readableRuas(slug) {
           if (!key || seenInRuas.has(key)) continue;   // dedupe dalam ruas
           seenInRuas.add(key);
           if (existing.has(key)) { skipped++; continue; } // sudah ada di katalog
+          existing.add(key);  // tandai ditangani agar ruas lain tak menambah nama sama
           const r = ins.run({
             id: 'bm_' + ruas.slice(0, 10) + '_' + key.slice(0, 24),
             name: c.name, link: c.url, group_name: group, jm_ruas: ruas,
           });
-          if (r.changes > 0) { added++; existing.add(key); }
+          if (r.changes > 0) added++;
         }
       }
     });

@@ -45,7 +45,4 @@ async function resolveById(id) {
   return cache ? (cache.get(id) || null) : null;
 }
 
-/** Kosongkan cache (mis. setelah stream gagal → paksa ambil URL terbaru). */
-function invalidate() { cache = null; cacheAt = 0; }
-
-module.exports = { resolveById, invalidate };
+module.exports = { resolveById };
