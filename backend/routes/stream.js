@@ -295,6 +295,16 @@ router.get('/info/:cameraId', authenticate, async (req, res) => {
 
   if (!camera) return res.status(404).json({ error: 'Camera not found' });
 
+  // vms.k3i-korlantas.id adalah server HLS (…/<nama>.stream/playlist.m3u8).
+  // Sebagian kamera salah dikatalog sbg RTSP dan/atau URL-nya berhenti di
+  // ".stream" tanpa "/playlist.m3u8" → salah dikirim ke transcode FFmpeg
+  // (gagal, layar hitam). Normalkan: paksa tipe HLS & lengkapi path playlist.
+  if (camera.host === 'vms.k3i-korlantas.id') {
+    let link = camera.link;
+    if (!/\.m3u8(\?|$)/i.test(link)) link = link.replace(/\/+$/, '') + '/playlist.m3u8';
+    camera = { ...camera, link, link_type: 'M3U8' };
+  }
+
   // UUID jmlive berputar → ambil URL TERKINI sebelum membangun respons.
   // Prioritas sumber URL segar:
   //  1) Bina Marga (publik, TANPA login/geo-issue dari server ID) — UTAMA jmlive.
