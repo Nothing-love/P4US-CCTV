@@ -16,7 +16,8 @@ const axios = require('axios');
 const BASE = 'https://binamarga.pu.go.id/contents/cctv_tol/?id_ruas=';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const TTL_MS = 240_000;      // 4 menit — cukup segar untuk UUID yang berputar
-const CONCURRENCY = 8;
+const CONCURRENCY = 5;       // sopan ke server Bina Marga (hindari rate-limit)
+const BATCH_DELAY_MS = 600;
 
 // Daftar ruas tol Bina Marga (se-Indonesia). Mudah ditambah bila ada yang baru.
 const RUAS = [
@@ -67,11 +68,11 @@ function parsePage(html) {
 }
 
 async function fetchRuas(ruas) {
-  for (let a = 0; a < 2; a++) {
+  for (let a = 0; a < 3; a++) {
     try {
       const r = await axios.get(BASE + ruas, { timeout: 15000, headers: { 'User-Agent': UA, 'Accept-Encoding': 'gzip' } });
       return parsePage(String(r.data));
-    } catch { if (a === 1) return []; await new Promise((res) => setTimeout(res, 1000)); }
+    } catch { if (a === 2) return []; await new Promise((res) => setTimeout(res, 1200)); }
   }
   return [];
 }
@@ -82,6 +83,7 @@ async function refresh() {
     const batch = RUAS.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map(fetchRuas));
     for (const items of results) for (const it of items) if (!map.has(norm(it.name))) map.set(norm(it.name), it.url);
+    if (i + CONCURRENCY < RUAS.length) await new Promise((res) => setTimeout(res, BATCH_DELAY_MS));
   }
   if (map.size) { index = map; indexAt = Date.now(); }
   return index;
@@ -109,4 +111,4 @@ async function resolveByName(name) {
 /** Panaskan indeks saat server start agar siap sebelum user membuka kamera. */
 function prewarm() { kickRefresh(); }
 
-module.exports = { resolveByName, prewarm, norm };
+module.exports = { resolveByName, prewarm, norm, RUAS, fetchRuasCameras: fetchRuas };
