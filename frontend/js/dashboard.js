@@ -572,6 +572,8 @@ function mountVideoStream(idx, cam, info) {
   video.muted = true;
   video.playsInline = true;
   video.autoplay = true;
+  // Begitu frame pertama benar-benar diputar, hilangkan indikator "memuat".
+  video.addEventListener('playing', () => removeSlotLoading(idx));
   let hlsInstance = null;
 
   if (Hls.isSupported()) {
@@ -634,7 +636,35 @@ function mountVideoStream(idx, cam, info) {
   top.innerHTML = `<span class="slot-num">Slot ${idx + 1}</span>`;
   slotEl.appendChild(top);
 
+  // RTSP/transcode butuh beberapa detik menyiapkan segmen pertama → tampilkan
+  // indikator "memuat" alih-alih layar hitam polos (dibersihkan saat 'playing'
+  // atau diganti pesan error bila gagal).
+  setSlotLoading(idx, linkType === 'RTSP' ? 'Menyiapkan stream (transcode)…' : 'Menyambungkan…');
+
   renderSlotOverlay(idx, cam);
+}
+
+// Indikator "memuat" per-slot (spinner + teks) di atas <video> yang masih hitam.
+function setSlotLoading(idx, text) {
+  const slotEl = document.getElementById(`slot-${idx}`);
+  if (!slotEl) return;
+  if (!document.getElementById('p4-spin-kf')) {
+    const st = document.createElement('style');
+    st.id = 'p4-spin-kf';
+    st.textContent = '@keyframes p4spin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(st);
+  }
+  removeSlotLoading(idx);
+  const el = document.createElement('div');
+  el.className = 'slot-loading';
+  el.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#9fb3c8;font-size:12px;pointer-events:none;background:rgba(0,0,0,.35);z-index:3';
+  el.innerHTML = '<div style="width:26px;height:26px;border:3px solid rgba(255,255,255,.18);border-top-color:#6ea8fe;border-radius:50%;animation:p4spin .8s linear infinite"></div><div>' + text + '</div>';
+  slotEl.appendChild(el);
+}
+function removeSlotLoading(idx) {
+  const slotEl = document.getElementById(`slot-${idx}`);
+  const e = slotEl && slotEl.querySelector('.slot-loading');
+  if (e) e.remove();
 }
 
 function renderSlotOverlay(idx, cam) {

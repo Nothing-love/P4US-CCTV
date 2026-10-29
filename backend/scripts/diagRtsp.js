@@ -1,0 +1,93 @@
+/**
+ * Diagnosa RTSP end-to-end (JALANKAN DI SERVER).
+ * Untuk tiap kamera RTSP: (1) TCP terjangkau?, (2) codec+pix_fmt, (3) ffmpeg
+ * benar-benar menarik 3 dtk & menghasilkan segmen (bukti keluar gambar).
+ * Menjawab "kenapa hitam": tak terjangkau, atau codec, atau kredensial/path.
+ *
+ * Jalankan:
+ *   node backend/scripts/diagRtsp.js "Kejora"     # kamera tertentu (cocok nama)
+ *   node backend/scripts/diagRtsp.js              # 12 kamera RTSP pertama
+ *   node backend/scripts/diagRtsp.js --live       # hanya yg health LIVE
+ */
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+const net = require('net');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
+const { initDatabase, getDb } = require('../db/database');
+const transcoder = require('../services/rtspTranscoder');
+const config = require('../config');
+
+const arg = process.argv[2];
+
+function tcpCheck(host, port, timeout = 4000) {
+  return new Promise((resolve) => {
+    const s = new net.Socket(); const t0 = Date.now(); let done = false;
+    const fin = (ok) => { if (done) return; done = true; try { s.destroy(); } catch {} resolve(ok ? Date.now() - t0 : -1); };
+    s.setTimeout(timeout);
+    s.once('connect', () => fin(true));
+    s.once('timeout', () => fin(false));
+    s.once('error', () => fin(false));
+    try { s.connect(port, host); } catch { fin(false); }
+  });
+}
+
+// Jalankan ffmpeg 3 dtk sesuai keputusan copy/encode; kembalikan jumlah segmen.
+function tryTranscode(link, encode) {
+  return new Promise((resolve) => {
+    const dir = path.join(os.tmpdir(), 'p4us-diag-' + Date.now() + Math.random().toString(36).slice(2, 6));
+    fs.mkdirSync(dir, { recursive: true });
+    const args = ['-rtsp_transport', 'tcp', '-timeout', '8000000', '-i', link, '-an', '-t', '3'];
+    if (encode) args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '50');
+    else args.push('-c:v', 'copy');
+    args.push('-f', 'hls', '-hls_time', '2', '-hls_segment_filename', path.join(dir, 's_%03d.ts'), path.join(dir, 'i.m3u8'));
+    const p = spawn(config.ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    p.stderr.on('data', (d) => { err = (err + d).slice(-400); });
+    const kill = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 12000);
+    p.on('exit', () => {
+      clearTimeout(kill);
+      let segs = 0;
+      try { segs = fs.readdirSync(dir).filter((f) => f.endsWith('.ts')).length; } catch {}
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      const reason = segs ? '' : (/401|unauthor/i.test(err) ? 'AUTH' : /refused|timed|-138|failed/i.test(err) ? 'TAK TERJANGKAU' : /not found|404|invalid data/i.test(err) ? 'PATH/DATA' : 'lihat stderr');
+      resolve({ segs, reason });
+    });
+  });
+}
+
+(async () => {
+  initDatabase();
+  const db = getDb();
+  let cams;
+  if (arg && arg !== '--live') {
+    cams = db.prepare("SELECT id,name,link,health_status FROM cameras WHERE link_type='RTSP' AND name LIKE ? LIMIT 6").all('%' + arg + '%');
+  } else if (arg === '--live') {
+    cams = db.prepare("SELECT id,name,link,health_status FROM cameras WHERE link_type='RTSP' AND health_status IN ('LIVE','SLOW') LIMIT 12").all();
+  } else {
+    cams = db.prepare("SELECT id,name,link,health_status FROM cameras WHERE link_type='RTSP' LIMIT 12").all();
+  }
+  if (!cams.length) { console.log('Tak ada kamera RTSP cocok.'); process.exit(0); }
+
+  console.log(`Menguji ${cams.length} kamera RTSP...\n`);
+  console.log('NAMA'.padEnd(34), 'TCP'.padEnd(8), 'CODEC'.padEnd(12), 'FFMPEG');
+  console.log('-'.repeat(78));
+  for (const c of cams) {
+    let host, port;
+    try { const u = new URL(c.link); host = u.hostname; port = u.port ? +u.port : 554; } catch { host = '?'; port = 0; }
+    const ms = await tcpCheck(host, port);
+    const tcp = ms >= 0 ? `${ms}ms` : 'MATI';
+    let codecStr = '-', ff = 'dilewati (TCP mati)';
+    if (ms >= 0) {
+      const pr = transcoder.probeVideoCodec(c.link, { rtsp: true });
+      codecStr = `${pr.codec || '?'}/${pr.pixFmt || '?'}`;
+      const r = await tryTranscode(c.link, !pr.playable);
+      ff = r.segs ? `OK ${r.segs} segmen → GAMBAR` : `GAGAL (${r.reason})`;
+    }
+    console.log(c.name.slice(0, 33).padEnd(34), tcp.padEnd(8), codecStr.padEnd(12), ff);
+  }
+  console.log('\nKeterangan: "OK ... → GAMBAR" = kamera benar keluar gambar di server.');
+  console.log('"TCP MATI" = server tak bisa jangkau kamera (IP privat perlu server sejaringan, atau kamera mati).');
+  process.exit(0);
+})();
