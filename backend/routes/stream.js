@@ -116,8 +116,10 @@ router.get('/transcode/:cameraId/:file', authenticate, async (req, res) => {
     //    tak bisa dekode H.265 walau playlist-nya valid).
     let encode = isHls;
     if (isRtsp) {
-      const codec = transcoder.probeVideoCodec(camera.link, { rtsp: true });
-      encode = codec !== 'h264';
+      // Copy hanya bila terbukti H.264 + pix_fmt aman-browser; selain itu
+      // (H.265, 4:2:2/10-bit, atau tak terdeteksi) re-encode agar tak hitam.
+      const probe = transcoder.probeVideoCodec(camera.link, { rtsp: true });
+      encode = !probe.playable;
     }
     transcoder.startSession(cameraId, camera.link, { rtsp: isRtsp, encode });
     const ready = await transcoder.waitForPlaylist(cameraId);

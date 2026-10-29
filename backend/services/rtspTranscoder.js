@@ -25,14 +25,21 @@ const ffprobePath = config.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
 // lagi nanti.
 const codecCache = new Map();
 
+// pix_fmt yang bisa didekode <video> browser via stream-copy (8-bit 4:2:0).
+// yuv422p/yuv444p/10-bit (yuv420p10le dll) TIDAK → harus re-encode.
+const BROWSER_SAFE_PIXFMT = /^(yuv420p|yuvj420p)$/;
+
 /**
- * Probe codec video stream pertama via ffprobe.
- * @returns {'h264'|'h265'|string|null} nama codec ternormalisasi, null bila gagal.
+ * Probe codec + pix_fmt video stream pertama via ffprobe.
+ * @returns {{codec:string|null, pixFmt:string|null, playable:boolean}}
+ *   playable = true hanya bila H.264 DAN pix_fmt aman-browser (bisa di-copy).
+ *   Bila probe gagal (kamera offline), codec=null & playable=false → pemanggil
+ *   sebaiknya re-encode (lebih aman daripada copy yang berisiko hitam).
  *
  * PENTING untuk layar hitam: banyak kamera IP (Hikvision/Dahua) memakai H.265
- * (HEVC) yang TIDAK bisa didekode browser. Bila di-"stream copy" ke HLS, playlist
- * valid terbentuk (seolah online) tapi gambar hitam. Dengan mengetahui codec,
- * pemanggil bisa memaksa re-encode ke H.264 untuk sumber non-H.264.
+ * (HEVC) — atau H.264 profil tinggi (4:2:2 / 10-bit) — yang TIDAK bisa didekode
+ * <video>. Bila di-"stream copy" ke HLS, playlist valid terbentuk (seolah online)
+ * tapi gambar HITAM. Dengan tahu codec+pix_fmt, pemanggil memaksa re-encode.
  */
 function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 8000 } = {}) {
   if (codecCache.has(inputUrl)) return codecCache.get(inputUrl);
@@ -40,19 +47,24 @@ function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 8000 } = {}) {
   const args = [];
   if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', String(timeoutMs * 1000));
   args.push('-i', inputUrl, '-select_streams', 'v:0',
-    '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', '-v', 'error');
+    '-show_entries', 'stream=codec_name,pix_fmt', '-of', 'default=nw=1:nk=1', '-v', 'error');
 
-  let codec = null;
+  let codec = null, pixFmt = null;
   try {
     const r = spawnSync(ffprobePath, args, { timeout: timeoutMs + 3000, encoding: 'utf8' });
-    const name = String(r.stdout || '').trim().toLowerCase();
-    if (/h264|avc/.test(name)) codec = 'h264';
-    else if (/hevc|h265/.test(name)) codec = 'h265';
-    else if (name) codec = name.split('\n')[0];
+    const lines = String(r.stdout || '').trim().toLowerCase().split('\n').map((s) => s.trim()).filter(Boolean);
+    // Urutan default: codec_name lalu pix_fmt.
+    const raw = lines[0] || '';
+    if (/h264|avc/.test(raw)) codec = 'h264';
+    else if (/hevc|h265/.test(raw)) codec = 'h265';
+    else if (raw) codec = raw;
+    if (lines[1]) pixFmt = lines[1];
   } catch { /* ffprobe tak ada / timeout → null */ }
 
-  if (codec) codecCache.set(inputUrl, codec);
-  return codec;
+  const playable = codec === 'h264' && !!pixFmt && BROWSER_SAFE_PIXFMT.test(pixFmt);
+  const result = { codec, pixFmt, playable };
+  if (codec) codecCache.set(inputUrl, result); // cache hanya hasil positif
+  return result;
 }
 
 function ensureRoot() {
