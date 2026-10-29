@@ -241,4 +241,4 @@ process.on('exit', shutdown);
 process.on('SIGINT', () => { shutdown(); process.exit(0); });
 process.on('SIGTERM', () => { shutdown(); process.exit(0); });
 
-module.exports = { startSession, stopSession, touch, waitForPlaylist, sessionDir, probeVideoCodec };
+module.exports = { startSession, stopSession, touch, waitForPlaylist, sessionDir, probeVideoCodec, rtspTimeoutArgs, getFfmpegMajor };

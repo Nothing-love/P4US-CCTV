@@ -48,7 +48,7 @@ function ver(bin) {
   console.log('keputusan: encode =', encode);
   const dir = path.join(os.tmpdir(), 'p4us-diagv-' + Date.now());
   fs.mkdirSync(dir, { recursive: true });
-  const args = ['-rtsp_transport', 'tcp', '-timeout', '6000000',
+  const args = ['-rtsp_transport', 'tcp', ...transcoder.rtspTimeoutArgs(6000000),
     '-fflags', '+discardcorrupt', '-err_detect', 'ignore_err', '-i', cam.link, '-an'];
   if (encode) args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '50');
   else args.push('-c:v', 'copy');
