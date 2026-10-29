@@ -20,6 +20,27 @@ const sessions = new Map();
 // Path ffprobe diturunkan dari ffmpegPath (...\ffmpeg(.exe) → ...\ffprobe(.exe)).
 const ffprobePath = config.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
 
+// Versi mayor FFmpeg (dideteksi sekali, di-cache). PENTING untuk timeout RTSP:
+// di FFmpeg < 5, opsi socket-timeout bernama `-stimeout`; `-timeout` di sana
+// justru berarti "listen timeout" (mode server) → ffmpeg malah mencoba
+// MENDENGARKAN dan gagal ("Unable to open RTSP for listening / Cannot assign
+// requested address"). Di FFmpeg >= 5, socket-timeout memakai `-timeout`.
+let ffmpegMajor = null;
+function getFfmpegMajor() {
+  if (ffmpegMajor !== null) return ffmpegMajor;
+  try {
+    const r = spawnSync(config.ffmpegPath, ['-version'], { encoding: 'utf8', timeout: 5000 });
+    const m = String(r.stdout || '').match(/ffmpeg version \D*(\d+)/i);
+    ffmpegMajor = m ? parseInt(m[1], 10) : 5; // tak terdeteksi → anggap modern
+  } catch { ffmpegMajor = 5; }
+  return ffmpegMajor;
+}
+// Argumen socket-timeout RTSP yang sesuai versi (nilai dalam MIKRODETIK).
+function rtspTimeoutArgs(microseconds) {
+  const opt = getFfmpegMajor() >= 5 ? '-timeout' : '-stimeout';
+  return [opt, String(microseconds)];
+}
+
 // Cache codec per URL input (codec kamera jarang berubah). Hanya hasil POSITIF
 // yang di-cache; hasil null (kamera offline saat probe) dibiarkan agar dicoba
 // lagi nanti.
@@ -45,7 +66,7 @@ function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 6000 } = {}) {
   if (codecCache.has(inputUrl)) return codecCache.get(inputUrl);
 
   const args = [];
-  if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', String(timeoutMs * 1000));
+  if (rtsp) args.push('-rtsp_transport', 'tcp', ...rtspTimeoutArgs(timeoutMs * 1000));
   args.push('-i', inputUrl, '-select_streams', 'v:0',
     '-show_entries', 'stream=codec_name,pix_fmt', '-of', 'default=nw=1:nk=1', '-v', 'error');
 
@@ -84,11 +105,11 @@ function sessionDir(cameraId) {
 // Build the FFmpeg argument list for a transcode session.
 function buildArgs(inputUrl, dir, { rtsp, encode }) {
   const args = [];
-  // -timeout 6s: jangan menggantung lama pada kamera yang sulit dijangkau.
+  // socket-timeout 6s (opsi sesuai versi: -stimeout di FFmpeg 4.x, -timeout di 5+).
   // -fflags +discardcorrupt + -err_detect ignore_err: banyak kamera H.265 mulai
   // di tengah GOP (sebelum keyframe) → "undecodable NALU/POC". Buang paket korup
   // & abaikan error sampai keyframe pertama agar output bersih, tak macet.
-  if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', '6000000',
+  if (rtsp) args.push('-rtsp_transport', 'tcp', ...rtspTimeoutArgs(6000000),
     '-fflags', '+discardcorrupt', '-err_detect', 'ignore_err');
   args.push('-i', inputUrl, '-an');
   if (encode) {
