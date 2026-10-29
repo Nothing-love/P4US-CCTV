@@ -8,6 +8,7 @@
     "dev": "nodemon backend/server.js",
     "import-cameras": "node backend/scripts/importCameras.js",
     "import-trafik": "node backend/scripts/importUnified.js",
+    "import-bandung": "node backend/scripts/importBandung.js",
     "reset-health": "node backend/scripts/resetHealth.js"
   },
   "dependencies": {
