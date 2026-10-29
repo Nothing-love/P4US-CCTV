@@ -17,11 +17,14 @@ async function checkBatch() {
   let db;
   try { db = getDb(); } catch { return; } // DB not ready yet
 
-  // Check all HLS/M3U8 cameras (the browser-playable ones). Embedded
-  // credentials, if any, are already part of the link.
+  // Cek kamera HLS/M3U8 (fetch playlist) DAN RTSP (cek TCP keterjangkauan).
+  // Kredensial, bila ada, sudah menyatu di link. RTSP memakai cek TCP ringan
+  // (checkStreamHealth → checkRtspReachable) supaya status online/offline NYATA,
+  // bukan selalu UNKNOWN. INTERNAL_PRIVATE tetap dilewati (host privat yang,
+  // dari luar jaringan server, memang tak terjangkau — cegah vonis DEAD massal).
   const cameras = db.prepare(`
     SELECT id, link, link_type FROM cameras
-    WHERE link_type IN ('M3U8','HLS')
+    WHERE link_type IN ('M3U8','HLS','RTSP')
       AND access_class NOT IN ('NOT_A_STREAM','INTERNAL_PRIVATE')
     ORDER BY id
     LIMIT ? OFFSET ?

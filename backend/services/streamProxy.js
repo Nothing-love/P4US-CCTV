@@ -5,10 +5,12 @@
  * This avoids browser CORS restrictions and hides source credentials.
  */
 const axios = require('axios');
+const net = require('net');
 const k3iBridge = require('./k3iBridge');
 
 const HTTP_TIMEOUT = 8000;
 const SEGMENT_TIMEOUT = 15000;
+const RTSP_TIMEOUT = 5000;
 
 // Simple in-memory cache for master playlists (avoids duplicate fetch within 2s)
 const playlistCache = new Map();
@@ -207,10 +209,49 @@ async function proxyHLS(req, res) {
   }
 }
 
+// ── Cek keterjangkauan RTSP (TCP ke host:port) ──────────────────────────────
+// Kamera RTSP tak bisa di-fetch seperti HLS, tapi kita bisa pastikan perangkat
+// HIDUP & port RTSP-nya terbuka dengan membuka koneksi TCP singkat (tanpa
+// kredensial, tanpa spawn proses). Ini sinyal "online/offline" NYATA dari sudut
+// pandang server: kalau server bisa connect ke port kamera, server bisa
+// men-transcode-nya; kalau tidak, memang tak terjangkau.
+//   connect sukses  → LIVE (<2.5s) / SLOW
+//   gagal/timeout   → DEAD
+//   URL bukan rtsp: → UNKNOWN (mis-katalog, jangan divonis mati)
+function checkRtspReachable(url) {
+  return new Promise((resolve) => {
+    let host, port;
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'rtsp:') return resolve({ status: 'UNKNOWN', latencyMs: null });
+      host = u.hostname;
+      port = u.port ? parseInt(u.port, 10) : 554;
+    } catch { return resolve({ status: 'DEAD', latencyMs: null }); }
+    if (!host || !Number.isInteger(port)) return resolve({ status: 'DEAD', latencyMs: null });
+
+    const start = Date.now();
+    const sock = new net.Socket();
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return; settled = true;
+      const latencyMs = Date.now() - start;
+      try { sock.destroy(); } catch {}
+      if (!ok) return resolve({ status: 'DEAD', latencyMs });
+      resolve({ status: latencyMs < 2500 ? 'LIVE' : 'SLOW', latencyMs });
+    };
+    sock.setTimeout(RTSP_TIMEOUT);
+    sock.once('connect', () => finish(true));
+    sock.once('timeout', () => finish(false));
+    sock.once('error', () => finish(false));
+    try { sock.connect(port, host); } catch { finish(false); }
+  });
+}
+
 async function checkStreamHealth(url, linkType) {
   if (!url) return { status: 'UNKNOWN', latencyMs: null };
+  if (linkType === 'RTSP') return checkRtspReachable(url);
   if (linkType !== 'M3U8' && linkType !== 'HLS') {
-    return { status: 'UNKNOWN', latencyMs: null }; // WSS/RTSP/etc not probed here
+    return { status: 'UNKNOWN', latencyMs: null }; // WSS/etc not probed here
   }
 
   const headers = { 'User-Agent': 'P4US-CCTV-HealthCheck/1.0' };
