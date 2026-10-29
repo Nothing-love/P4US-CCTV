@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { authenticate, authenticateMedia, requireRole } = require('../middleware/authMiddleware');
-const { proxyHLS } = require('../services/streamProxy');
+const { proxyHLS, checkRtspReachable } = require('../services/streamProxy');
 const { createRateLimiter } = require('../middleware/rateLimiter');
 const { getDb } = require('../db/database');
 const { ffmpegAvailable } = require('../services/ffmpegCheck');
@@ -110,6 +110,16 @@ router.get('/transcode/:cameraId/:file', authenticate, async (req, res) => {
   }
 
   if (file === 'index.m3u8') {
+    // FAST-FAIL: kamera RTSP yang portnya tak terjangkau (mis. IP privat 10.x
+    // dari server publik) jangan ditunggu sampai timeout transcode ~20 dtk.
+    // Cek TCP 3 dtk dulu; kalau mati, langsung balas error → frontend cepat
+    // tampilkan pesan, bukan spinner berkepanjangan.
+    if (isRtsp) {
+      const reach = await checkRtspReachable(camera.link, 3000);
+      if (reach.status === 'DEAD') {
+        return res.status(503).json({ error: 'Kamera tidak terjangkau dari server', code: 'UNREACHABLE' });
+      }
+    }
     // Tentukan apakah perlu re-encode ke H.264:
     //  - HLS di sini = codec browser tak bisa putar (mis. H.265) → selalu encode.
     //  - RTSP = probe codec dulu. H.264 → stream-copy (ringan). H.265/lainnya/

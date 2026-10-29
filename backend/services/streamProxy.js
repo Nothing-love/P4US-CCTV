@@ -218,7 +218,7 @@ async function proxyHLS(req, res) {
 //   connect sukses  → LIVE (<2.5s) / SLOW
 //   gagal/timeout   → DEAD
 //   URL bukan rtsp: → UNKNOWN (mis-katalog, jangan divonis mati)
-function checkRtspReachable(url) {
+function checkRtspReachable(url, timeoutMs = RTSP_TIMEOUT) {
   return new Promise((resolve) => {
     let host, port;
     try {
@@ -239,7 +239,7 @@ function checkRtspReachable(url) {
       if (!ok) return resolve({ status: 'DEAD', latencyMs });
       resolve({ status: latencyMs < 2500 ? 'LIVE' : 'SLOW', latencyMs });
     };
-    sock.setTimeout(RTSP_TIMEOUT);
+    sock.setTimeout(timeoutMs);
     sock.once('connect', () => finish(true));
     sock.once('timeout', () => finish(false));
     sock.once('error', () => finish(false));
@@ -324,4 +324,4 @@ async function checkStreamHealth(url, linkType) {
   return { status: 'DEAD', latencyMs: r.latencyMs };
 }
 
-module.exports = { proxyHLS, checkStreamHealth };
+module.exports = { proxyHLS, checkStreamHealth, checkRtspReachable };

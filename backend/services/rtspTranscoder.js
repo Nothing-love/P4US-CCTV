@@ -12,7 +12,7 @@ const config = require('../config');
 
 const OUTPUT_ROOT = path.join(os.tmpdir(), 'p4us-hls');
 const IDLE_TIMEOUT_MS = 60_000;   // stop ffmpeg if no playlist hit for 60s
-const START_TIMEOUT_MS = 20_000;  // give ffmpeg this long to produce a playlist
+const START_TIMEOUT_MS = 12_000;  // give ffmpeg this long to produce a playlist
 
 // cameraId -> { proc, dir, lastAccess, ready, startedAt }
 const sessions = new Map();
@@ -41,7 +41,7 @@ const BROWSER_SAFE_PIXFMT = /^(yuv420p|yuvj420p)$/;
  * <video>. Bila di-"stream copy" ke HLS, playlist valid terbentuk (seolah online)
  * tapi gambar HITAM. Dengan tahu codec+pix_fmt, pemanggil memaksa re-encode.
  */
-function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 8000 } = {}) {
+function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 6000 } = {}) {
   if (codecCache.has(inputUrl)) return codecCache.get(inputUrl);
 
   const args = [];
@@ -82,7 +82,8 @@ function sessionDir(cameraId) {
 // Build the FFmpeg argument list for a transcode session.
 function buildArgs(inputUrl, dir, { rtsp, encode }) {
   const args = [];
-  if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', '10000000');
+  // -timeout 6s: jangan menggantung lama pada kamera yang sulit dijangkau.
+  if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', '6000000');
   args.push('-i', inputUrl, '-an');
   if (encode) {
     // Re-encode to H.264 (e.g. H.265 source that browsers can't decode).

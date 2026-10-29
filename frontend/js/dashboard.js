@@ -586,10 +586,11 @@ function mountVideoStream(idx, cam, info) {
       backBufferLength: 8,
       startLevel: -1,
       debug: false,
-      // Transcode can take a few seconds to produce the first playlist.
-      manifestLoadingTimeOut: 25000,
-      manifestLoadingMaxRetry: 3,
-      manifestLoadingRetryDelay: 2000,
+      // Transcode butuh beberapa detik untuk playlist pertama. Server sudah
+      // fast-fail kamera tak terjangkau (3 dtk), jadi timeout cukup pendek.
+      manifestLoadingTimeOut: 14000,
+      manifestLoadingMaxRetry: 1,
+      manifestLoadingRetryDelay: 1500,
       // Direct (CORS-open) streams are fetched straight from the source, so
       // don't attach our own Authorization header; only proxied URLs need it.
       xhrSetup(xhr) {
@@ -605,7 +606,11 @@ function mountVideoStream(idx, cam, info) {
     let netRetries = 0, mediaRecovered = false;
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return;
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && netRetries < 3) {
+      // 503 = server sudah memastikan kamera tak terjangkau → jangan retry,
+      // langsung tampilkan pesan (hemat waktu, tak ada spinner berkepanjangan).
+      const code = data.response && data.response.code;
+      if (code === 503) { try { hls.destroy(); } catch {} return failover(idx, cam, info, 'Kamera tidak terjangkau dari server'); }
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && netRetries < 2) {
         netRetries++;
         setTimeout(() => { try { hls.startLoad(); } catch {} }, 1000);
       } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecovered) {
