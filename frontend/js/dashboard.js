@@ -22,7 +22,10 @@ async function init() {
   if (user) {
     document.getElementById('user-name').textContent = user.name;
     const badge = document.getElementById('user-badge');
-    if (user.role === 'superadmin') { badge.style.display = ''; badge.textContent = 'SUPERADMIN'; badge.classList.add('badge-super'); }
+    if (user.role === 'superadmin') {
+      badge.style.display = ''; badge.textContent = 'SUPERADMIN'; badge.classList.add('badge-super');
+      document.getElementById('btn-k3i').style.display = '';   // Sync K3I: khusus superadmin
+    }
     else if (user.role === 'admin') { badge.style.display = ''; badge.textContent = 'ADMIN'; }
     if (user.role === 'admin' || user.role === 'superadmin') {
       document.getElementById('btn-users').style.display = '';
@@ -1109,11 +1112,42 @@ async function rejectUser(id, name) {
   } catch (err) { alert('Gagal: ' + err.message); }
 }
 
+// ─── Sync K3I via token browser (KHUSUS SUPERADMIN) ───────────────────────
+function openK3iModal() {
+  document.getElementById('k3i-result').textContent = '';
+  document.getElementById('k3i-modal').style.display = 'flex';
+}
+function closeK3iModal() { document.getElementById('k3i-modal').style.display = 'none'; }
+async function syncK3iToken() {
+  const input = document.getElementById('k3i-token-input');
+  const result = document.getElementById('k3i-result');
+  const btn = document.getElementById('btn-k3i-sync');
+  const token = (input.value || '').trim();
+  if (token.length < 20) { result.style.color = '#f87171'; result.textContent = 'Token tidak valid.'; return; }
+  btn.disabled = true; result.style.color = 'var(--text-muted)'; result.textContent = 'Menyinkronkan… (bisa beberapa detik)';
+  try {
+    const r = await api.post('/api/stream/k3i/token', { token });
+    result.style.color = '#4ade80';
+    result.textContent = `Berhasil: ${r.updated ?? 0} kamera diperbarui dari ${r.fetched ?? 0} (koordinat: ${r.withCoords ?? 0}).`;
+    input.value = '';
+    await loadCameras();
+  } catch (e) {
+    result.style.color = '#f87171';
+    result.textContent = 'Gagal: ' + (e.message || 'error') + ' — pastikan token K3I masih valid.';
+  } finally { btn.disabled = false; }
+}
+
 // ─── Static event listeners (no inline handlers in HTML) ──────────────────
 document.getElementById('btn-users').addEventListener('click', openUsersModal);
 document.getElementById('btn-users-close').addEventListener('click', closeUsersModal);
 document.getElementById('users-modal').addEventListener('click', (e) => {
   if (e.target.id === 'users-modal') closeUsersModal();
+});
+document.getElementById('btn-k3i').addEventListener('click', openK3iModal);
+document.getElementById('btn-k3i-close').addEventListener('click', closeK3iModal);
+document.getElementById('btn-k3i-sync').addEventListener('click', syncK3iToken);
+document.getElementById('k3i-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'k3i-modal') closeK3iModal();
 });
 document.getElementById('btn-logout').addEventListener('click', doLogout);
 document.getElementById('btn-clear-all').addEventListener('click', clearAllSlots);

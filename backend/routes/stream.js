@@ -57,9 +57,9 @@ router.post('/k3i/sync', authenticate, requireRole('admin', 'superadmin'), async
   }
 });
 
-// POST /api/stream/k3i/token — (admin) use a token copied from a logged-in K3I
-// browser (localStorage "tbp-token") and immediately sync coordinates.
-router.post('/k3i/token', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+// POST /api/stream/k3i/token — (SUPERADMIN saja) pakai token dari sesi K3I yang
+// login di browser (localStorage "tbp-token") lalu langsung sinkron katalog.
+router.post('/k3i/token', authenticate, requireRole('superadmin'), async (req, res) => {
   const token = (req.body?.token || '').trim();
   if (!token || token.length < 20) {
     return res.status(400).json({ error: 'Token tidak valid' });
