@@ -23,6 +23,15 @@ const FILE = path.join(__dirname, '../../catalog_trafik_live.csv');
 function num(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 function intOrNull(v) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; }
 
+// Ekstrak id_ruas dari URL Bina Marga di kolom hal (mis. ?id_ruas=dalam-kota).
+function extractRuas(hal) {
+  if (!hal) return null;
+  try {
+    const u = new URL(hal);
+    return u.searchParams.get('id_ruas') || null;
+  } catch { return null; }
+}
+
 function run() {
   initDatabase();
   const db = getDb();
@@ -41,17 +50,20 @@ function run() {
     INSERT OR IGNORE INTO cameras
       (id, name, type, link_type, scheme, host, owner, access_class, link,
        backup_link, backup_link_type, endpoint_kind, refresh_sec,
-       province_code, province_name, lat, lng, group_name, category, credentials)
+       province_code, province_name, lat, lng, group_name, category, credentials, jm_ruas)
     VALUES
       (@id, @name, @type, @link_type, @scheme, @host, @owner, @access_class, @link,
        @backup_link, @backup_link_type, @endpoint_kind, @refresh_sec,
-       @province_code, @province_name, @lat, @lng, @group_name, @category, @credentials)
+       @province_code, @province_name, @lat, @lng, @group_name, @category, @credentials, @jm_ruas)
   `);
+  // UPDATE path: isi jm_ruas untuk kamera jmlive yang sudah ada di DB (dari impor lama).
+  const stmtRuas = db.prepare(`UPDATE cameras SET jm_ruas = @jm_ruas WHERE id = @id AND jm_ruas IS NULL AND @jm_ruas IS NOT NULL`);
 
   let seen = 0;
   transaction(() => {
     for (const r of rows) {
       if (!r.id || !r.link) continue;
+      const jm_ruas = extractRuas(r.hal);
       stmt.run({
         id: r.id,
         name: r.name || 'CCTV',
@@ -73,7 +85,9 @@ function run() {
         group_name: r.group_name || null,
         category: r.category || null,
         credentials: r.credentials || null,
+        jm_ruas,
       });
+      if (jm_ruas) stmtRuas.run({ id: r.id, jm_ruas });
       seen++;
     }
   });

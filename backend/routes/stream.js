@@ -9,6 +9,7 @@ const { getDb } = require('../db/database');
 const { ffmpegAvailable } = require('../services/ffmpegCheck');
 const transcoder = require('../services/rtspTranscoder');
 const k3iBridge = require('../services/k3iBridge');
+const jmliveResolver = require('../services/jmliveResolver');
 
 const router = express.Router();
 
@@ -258,13 +259,19 @@ function backupKind(bt) {
 // GET /api/stream/info/:cameraId — resolves how a camera should be played
 // (primer + backup untuk failover).
 router.get('/info/:cameraId', authenticate, async (req, res) => {
-  const camera = getDb().prepare(`
+  let camera = getDb().prepare(`
     SELECT id, name, link, link_type, host, access_class, health_status,
-           backup_link, backup_link_type, endpoint_kind, refresh_sec
+           backup_link, backup_link_type, endpoint_kind, refresh_sec, jm_ruas
     FROM cameras WHERE id = ?
   `).get(req.params.cameraId);
 
   if (!camera) return res.status(404).json({ error: 'Camera not found' });
+
+  // Jmlive: UUID berputar — ambil URL HLS terkini via resolver sebelum membangun respons.
+  if (camera.host === 'jmlive.jasamarga.com' && camera.jm_ruas) {
+    const freshHls = await jmliveResolver.resolveJmlive(camera.jm_ruas, camera.name);
+    if (freshHls) camera = { ...camera, link: freshHls };
+  }
 
   const base = `${req.protocol}://${req.get('host')}`;
   const primary = await resolveLink(base, camera.id, camera.link, camera.link_type,
