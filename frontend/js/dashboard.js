@@ -389,9 +389,12 @@ function addCameraToNextSlot(cameraId) {
   addCameraToSlot(cameraId, targetSlot);
 }
 
-async function addCameraToSlot(cameraId, slotIdx) {
+async function addCameraToSlot(cameraId, slotIdx, isAuto = false) {
   const cam = state.cameras.find(c => c.id === cameraId);
   if (!cam) return;
+
+  cancelSlotRetry(slotIdx);                 // batalkan retry tertunda
+  if (!isAuto) slotRetry.count[slotIdx] = 0; // aksi manual = mulai hitung dari nol
 
   // Stop existing if any
   if (state.slots[slotIdx]) destroySlot(slotIdx);
@@ -427,6 +430,27 @@ function renderEmptySlot(idx) {
   if (el) el.innerHTML = '<div class="slot-empty"><div class="plus">+</div><div class="hint">Pilih CCTV dari peta</div></div>';
 }
 
+// ── Auto-recovery per slot ──────────────────────────────────────────────────
+// Stream bisa gagal sesaat (rate-limit transien, UUID jmlive berputar, upstream
+// goyang). Alih-alih menunggu user reload/klik, pasang ulang OTOMATIS (ambil
+// /info segar) dgn backoff, dibatasi agar tak loop pada kamera yg benar mati.
+const slotRetry = { count: {}, timer: {} };
+function cancelSlotRetry(idx) {
+  if (slotRetry.timer[idx]) { clearTimeout(slotRetry.timer[idx]); delete slotRetry.timer[idx]; }
+}
+function scheduleSlotRetry(idx, camId) {
+  cancelSlotRetry(idx);
+  const n = (slotRetry.count[idx] || 0) + 1;
+  slotRetry.count[idx] = n;
+  if (n > 6) return false;                               // menyerah → tombol manual
+  const delay = Math.min(10000 + (n - 1) * 5000, 30000); // 10,15,20,25,30,30 dtk
+  slotRetry.timer[idx] = setTimeout(() => {
+    delete slotRetry.timer[idx];
+    if (!state.slots[idx]) addCameraToSlot(camId, idx, true); // hanya bila slot masih kosong
+  }, delay);
+  return true;
+}
+
 function showSlotError(idx, msg) {
   // Bebaskan slot supaya CCTV mati bisa diganti kamera lain.
   const slot = state.slots[idx];
@@ -436,6 +460,9 @@ function showSlotError(idx, msg) {
   state.slots[idx] = null;
   if (state.activeSlot === idx) { updatePtzPanel(null); }
 
+  // Jadwalkan pemasangan ulang otomatis (bila belum menyerah).
+  const willRetry = cam ? scheduleSlotRetry(idx, cam.id) : false;
+
   const el = document.getElementById(`slot-${idx}`);
   el.innerHTML = '';
   const box = document.createElement('div');
@@ -443,7 +470,7 @@ function showSlotError(idx, msg) {
   const title = document.createElement('div'); title.textContent = '⚠ Stream gagal';
   const detail = document.createElement('div');
   detail.style.cssText = 'font-size:10px;color:var(--text-muted);margin:4px 0 8px';
-  detail.textContent = msg;
+  detail.textContent = willRetry ? `${msg} · mencoba ulang otomatis…` : msg;
   box.append(title, detail);
 
   const actions = document.createElement('div');
@@ -575,8 +602,9 @@ function mountVideoStream(idx, cam, info) {
   video.muted = true;
   video.playsInline = true;
   video.autoplay = true;
-  // Begitu frame pertama benar-benar diputar, hilangkan indikator "memuat".
-  video.addEventListener('playing', () => removeSlotLoading(idx));
+  // Begitu frame pertama benar-benar diputar, hilangkan indikator "memuat"
+  // dan reset hitungan auto-retry (stream sehat lagi).
+  video.addEventListener('playing', () => { removeSlotLoading(idx); slotRetry.count[idx] = 0; });
   let hlsInstance = null;
 
   if (Hls.isSupported()) {
@@ -754,6 +782,7 @@ function destroySlot(idx) {
 }
 
 function removeSlot(idx) {
+  cancelSlotRetry(idx); slotRetry.count[idx] = 0;
   destroySlot(idx);
   api.delete(`/api/cameras/slots/${idx + 1}`).catch(() => {});
   renderEmptySlot(idx);
