@@ -132,6 +132,8 @@ app.use((err, req, res, _next) => {
 function start() {
   initDatabase();
   startHealthChecker();
+  // Panaskan indeks Bina Marga (URL jmlive segar) agar siap saat user buka kamera.
+  try { require('./services/binaMargaResolver').prewarm(); } catch {}
   // Koordinat K3I dikunci: sync otomatis dimatikan agar posisi tidak berubah.
   // Re-sync manual masih bisa lewat endpoint admin bila sewaktu-waktu diperlukan.
   const { ffmpegAvailable } = require('./services/ffmpegCheck');
