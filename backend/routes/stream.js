@@ -109,8 +109,17 @@ router.get('/transcode/:cameraId/:file', authenticate, async (req, res) => {
   }
 
   if (file === 'index.m3u8') {
-    // RTSP: try stream-copy first. HLS here = codec browser can't play → re-encode.
-    transcoder.startSession(cameraId, camera.link, { rtsp: isRtsp, encode: isHls });
+    // Tentukan apakah perlu re-encode ke H.264:
+    //  - HLS di sini = codec browser tak bisa putar (mis. H.265) → selalu encode.
+    //  - RTSP = probe codec dulu. H.264 → stream-copy (ringan). H.265/lainnya/
+    //    tak terdeteksi → re-encode, supaya tidak keluar LAYAR HITAM (browser
+    //    tak bisa dekode H.265 walau playlist-nya valid).
+    let encode = isHls;
+    if (isRtsp) {
+      const codec = transcoder.probeVideoCodec(camera.link, { rtsp: true });
+      encode = codec !== 'h264';
+    }
+    transcoder.startSession(cameraId, camera.link, { rtsp: isRtsp, encode });
     const ready = await transcoder.waitForPlaylist(cameraId);
     if (!ready) {
       transcoder.stopSession(cameraId);

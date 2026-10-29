@@ -7,7 +7,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const config = require('../config');
 
 const OUTPUT_ROOT = path.join(os.tmpdir(), 'p4us-hls');
@@ -16,6 +16,44 @@ const START_TIMEOUT_MS = 20_000;  // give ffmpeg this long to produce a playlist
 
 // cameraId -> { proc, dir, lastAccess, ready, startedAt }
 const sessions = new Map();
+
+// Path ffprobe diturunkan dari ffmpegPath (...\ffmpeg(.exe) → ...\ffprobe(.exe)).
+const ffprobePath = config.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+
+// Cache codec per URL input (codec kamera jarang berubah). Hanya hasil POSITIF
+// yang di-cache; hasil null (kamera offline saat probe) dibiarkan agar dicoba
+// lagi nanti.
+const codecCache = new Map();
+
+/**
+ * Probe codec video stream pertama via ffprobe.
+ * @returns {'h264'|'h265'|string|null} nama codec ternormalisasi, null bila gagal.
+ *
+ * PENTING untuk layar hitam: banyak kamera IP (Hikvision/Dahua) memakai H.265
+ * (HEVC) yang TIDAK bisa didekode browser. Bila di-"stream copy" ke HLS, playlist
+ * valid terbentuk (seolah online) tapi gambar hitam. Dengan mengetahui codec,
+ * pemanggil bisa memaksa re-encode ke H.264 untuk sumber non-H.264.
+ */
+function probeVideoCodec(inputUrl, { rtsp = true, timeoutMs = 8000 } = {}) {
+  if (codecCache.has(inputUrl)) return codecCache.get(inputUrl);
+
+  const args = [];
+  if (rtsp) args.push('-rtsp_transport', 'tcp', '-timeout', String(timeoutMs * 1000));
+  args.push('-i', inputUrl, '-select_streams', 'v:0',
+    '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', '-v', 'error');
+
+  let codec = null;
+  try {
+    const r = spawnSync(ffprobePath, args, { timeout: timeoutMs + 3000, encoding: 'utf8' });
+    const name = String(r.stdout || '').trim().toLowerCase();
+    if (/h264|avc/.test(name)) codec = 'h264';
+    else if (/hevc|h265/.test(name)) codec = 'h265';
+    else if (name) codec = name.split('\n')[0];
+  } catch { /* ffprobe tak ada / timeout → null */ }
+
+  if (codec) codecCache.set(inputUrl, codec);
+  return codec;
+}
 
 function ensureRoot() {
   fs.mkdirSync(OUTPUT_ROOT, { recursive: true });
@@ -36,7 +74,10 @@ function buildArgs(inputUrl, dir, { rtsp, encode }) {
   args.push('-i', inputUrl, '-an');
   if (encode) {
     // Re-encode to H.264 (e.g. H.265 source that browsers can't decode).
-    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-g', '50');
+    // -pix_fmt yuv420p: sebagian kamera keluarkan yuvj420p/yuv422 yang bikin
+    // sebagian browser gagal render (layar hitam) — paksa ke 8-bit 4:2:0.
+    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+      '-pix_fmt', 'yuv420p', '-g', '50');
   } else {
     args.push('-c:v', 'copy'); // stream copy = light CPU, try first for RTSP
   }
@@ -160,4 +201,4 @@ process.on('exit', shutdown);
 process.on('SIGINT', () => { shutdown(); process.exit(0); });
 process.on('SIGTERM', () => { shutdown(); process.exit(0); });
 
-module.exports = { startSession, stopSession, touch, waitForPlaylist, sessionDir };
+module.exports = { startSession, stopSession, touch, waitForPlaylist, sessionDir, probeVideoCodec };
