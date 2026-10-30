@@ -108,6 +108,11 @@ app.use('/assets', express.static(path.join(__dirname, '..'), {
 app.use(express.static(path.join(__dirname, '../frontend'), {
   index: false,
   maxAge: '5m',
+  setHeaders(res, fp) {
+    // HTML selalu divalidasi (perubahan CSS/markup inline langsung termuat,
+    // tak "nyangkut" versi lama di cache browser). Aset lain tetap di-cache.
+    if (fp.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+  },
 }));
 
 // ─── API routes ───────────────────────────────────────────────────────────

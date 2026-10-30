@@ -241,12 +241,34 @@
     .badge-admin { background: rgba(212,160,23,.15); color: var(--gold); border: 1px solid var(--gold); border-radius: 3px; font-size: 9px; padding: 1px 6px; font-weight: 700; letter-spacing: 1px; }
     .badge-super { background: rgba(192,57,43,.15); color: var(--accent); border-color: var(--accent); }
 
+    /* ── Grid LAYAR PENUH (video wall) ─────────────────────────────────── */
+    /* Pakai class (andal lintas browser/iPad); native fullscreen jadi bonus.
+       Grid mengisi seluruh layar: grid-4 = 2x2, grid-8 = 4x2 (landscape) /
+       2x4 (layar sempit/portrait). Mengalahkan aturan responsif via spesifisitas. */
+    .grid-panel.grid-fullscreen {
+      position: fixed; inset: 0; z-index: 9999; width: 100vw; height: 100vh;
+      background: #000; display: flex; flex-direction: column;
+    }
+    .grid-panel.grid-fullscreen .grid-toolbar { background: rgba(0,0,0,.65); }
+    .grid-panel.grid-fullscreen .video-grid { flex: 1; min-height: 0; overflow: hidden; }
+    .grid-panel.grid-fullscreen .video-grid.grid-4 {
+      grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; grid-auto-rows: 1fr;
+    }
+    .grid-panel.grid-fullscreen .video-grid.grid-8 {
+      grid-template-columns: repeat(4, 1fr); grid-template-rows: 1fr 1fr; grid-auto-rows: 1fr;
+    }
+    @media (max-width: 820px) {
+      .grid-panel.grid-fullscreen .video-grid.grid-8 {
+        grid-template-columns: 1fr 1fr; grid-template-rows: repeat(4, 1fr);
+      }
+    }
+
     /* ── Responsif: tablet & layar sempit ──────────────────────────────── */
     /* Desktop = "video wall" tinggi tetap (overflow hidden). Di tablet/HP,
        tinggi tetap itu menekan & MEMOTONG grid. Jadi: izinkan halaman
        men-scroll, sidebar disembunyikan, map diberi tinggi wajar, dan grid
        memakai lebih sedikit kolom agar tiap kamera tidak sempit/terpotong. */
-    @media (max-width: 1024px) {
+    @media (max-width: 1180px) {
       html, body { height: auto; overflow-x: hidden; overflow-y: visible; }
       .app { display: block; height: auto; min-height: 100vh; }
       .topbar { position: sticky; top: 0; flex-wrap: wrap; height: auto;
@@ -359,6 +381,7 @@
           <button class="grid-size-btn active" id="btn-grid-4">4</button>
           <button class="grid-size-btn" id="btn-grid-8">8</button>
           <div style="flex:1"></div>
+          <button class="btn-sm" id="btn-fullscreen">⛶ Layar Penuh</button>
           <button class="btn-sm" id="btn-clear-all">Kosongkan Semua</button>
         </div>
         <div class="video-grid grid-4" id="video-grid"></div>
@@ -407,6 +430,6 @@
 <script src="/js/api.js?v=22"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
-<script src="/js/dashboard.js?v=31"></script>
+<script src="/js/dashboard.js?v=32"></script>
 </body>
 </html>

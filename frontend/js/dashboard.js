@@ -1186,6 +1186,30 @@ document.getElementById('btn-logout').addEventListener('click', doLogout);
 document.getElementById('btn-clear-all').addEventListener('click', clearAllSlots);
 document.getElementById('btn-grid-4').addEventListener('click', function() { setGridSize(4, this); });
 document.getElementById('btn-grid-8').addEventListener('click', function() { setGridSize(8, this); });
+
+// ── Grid layar penuh (video wall) ──────────────────────────────────────────
+function toggleGridFullscreen() {
+  const el = document.querySelector('.grid-panel');
+  const btn = document.getElementById('btn-fullscreen');
+  const on = el.classList.toggle('grid-fullscreen');   // utama: class (andal)
+  if (btn) btn.textContent = on ? '⛶ Keluar' : '⛶ Layar Penuh';
+  try {
+    if (on) { const req = el.requestFullscreen || el.webkitRequestFullscreen; if (req) req.call(el).catch(() => {}); }
+    else if (document.fullscreenElement || document.webkitFullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); }
+  } catch {}
+}
+document.getElementById('btn-fullscreen').addEventListener('click', toggleGridFullscreen);
+// Sinkron saat user keluar fullscreen via Esc / gesture OS.
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) {
+    const el = document.querySelector('.grid-panel');
+    if (el && el.classList.contains('grid-fullscreen')) {
+      el.classList.remove('grid-fullscreen');
+      const btn = document.getElementById('btn-fullscreen');
+      if (btn) btn.textContent = '⛶ Layar Penuh';
+    }
+  }
+});
 document.getElementById('topbar-logo-img').addEventListener('error', function() { this.style.display = 'none'; });
 document.getElementById('filter-all').addEventListener('click', function() { setStatusFilter('all', this); });
 document.getElementById('filter-online').addEventListener('click', function() { setStatusFilter('online', this); });
