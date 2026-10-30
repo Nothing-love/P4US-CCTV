@@ -241,9 +241,33 @@
     .badge-admin { background: rgba(212,160,23,.15); color: var(--gold); border: 1px solid var(--gold); border-radius: 3px; font-size: 9px; padding: 1px 6px; font-weight: 700; letter-spacing: 1px; }
     .badge-super { background: rgba(192,57,43,.15); color: var(--accent); border-color: var(--accent); }
 
-    @media (max-width: 768px) {
-      .main { grid-template-columns: 1fr; }
+    /* ── Responsif: tablet & layar sempit ──────────────────────────────── */
+    /* Desktop = "video wall" tinggi tetap (overflow hidden). Di tablet/HP,
+       tinggi tetap itu menekan & MEMOTONG grid. Jadi: izinkan halaman
+       men-scroll, sidebar disembunyikan, map diberi tinggi wajar, dan grid
+       memakai lebih sedikit kolom agar tiap kamera tidak sempit/terpotong. */
+    @media (max-width: 1024px) {
+      html, body { height: auto; overflow-x: hidden; overflow-y: visible; }
+      .app { display: block; height: auto; min-height: 100vh; }
+      .topbar { position: sticky; top: 0; flex-wrap: wrap; height: auto;
+        min-height: 48px; padding: 6px 12px; row-gap: 4px; }
+      .main { grid-template-columns: 1fr; overflow: visible; }
+      .center { overflow: visible; }
       .sidebar-right { display: none; }
+      .map-panel { height: 40vh; min-height: 260px; flex: none; }
+      .grid-panel { flex: none; overflow: visible; }
+      .video-grid { overflow: visible; }
+      .video-grid.grid-4, .video-grid.grid-8 {
+        grid-template-columns: 1fr 1fr; grid-template-rows: none;
+        grid-auto-rows: minmax(170px, 30vw);
+      }
+    }
+    @media (max-width: 560px) {
+      .video-grid.grid-4, .video-grid.grid-8 {
+        grid-template-columns: 1fr; grid-auto-rows: minmax(190px, 54vw);
+      }
+      .map-panel { height: 34vh; min-height: 220px; }
+      .topbar-info { display: none; }   /* hemat ruang di HP */
     }
   </style>
 </head>
@@ -383,6 +407,6 @@
 <script src="/js/api.js?v=22"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
-<script src="/js/dashboard.js?v=30"></script>
+<script src="/js/dashboard.js?v=31"></script>
 </body>
 </html>

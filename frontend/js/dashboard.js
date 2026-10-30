@@ -72,6 +72,10 @@ function initMap() {
     zoom: 4.2,
     maxZoom: 20,
     attributionControl: false,
+    // Di layar sempit (tablet/HP) halaman bisa di-scroll; tanpa ini map
+    // "menangkap" scroll satu-jari → sulit turun ke grid. cooperativeGestures
+    // membuat pan/zoom butuh dua jari (atau Ctrl+scroll), scroll biasa lewat.
+    cooperativeGestures: window.matchMedia('(max-width: 1024px)').matches,
   });
   state.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left');
 
