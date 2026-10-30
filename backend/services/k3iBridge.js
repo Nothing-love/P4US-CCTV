@@ -26,7 +26,10 @@ const MIN_LOGIN_INTERVAL_MS = 20_000;
 // Token + login-backoff state, persisted across restarts so a restart never
 // re-hammers (and keeps locked) an account the portal has temporarily rejected.
 const persisted = loadState();
-let session = { token: persisted.token, expiresAt: persisted.expiresAt };
+// session.cookie: sebagian deploy K3I memakai AUTH BERBASIS COOKIE (token tidak
+// ada di localStorage, hanya cookie sesi). Kalau cookie di-set, kita kirim
+// sebagai header Cookie alih-alih Authorization.
+let session = { token: persisted.token, expiresAt: persisted.expiresAt, cookie: persisted.cookie };
 let cooldownUntil = persisted.cooldownUntil;
 let consecutiveFailures = persisted.consecutiveFailures;
 let inflightLogin = null;
@@ -35,20 +38,23 @@ let lastLoginAt = 0;   // timestamp percobaan login terakhir (throttle in-memory
 function loadState() {
   try {
     const s = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+    const valid = Date.now() < (s.expiresAt || 0);
     return {
-      token: (s.token && Date.now() < s.expiresAt) ? s.token : null,
+      token: (s.token && valid) ? s.token : null,
+      cookie: (s.cookie && valid) ? s.cookie : null,
       expiresAt: s.expiresAt || 0,
       cooldownUntil: s.cooldownUntil || 0,
       consecutiveFailures: s.consecutiveFailures || 0,
     };
   } catch {}
-  return { token: null, expiresAt: 0, cooldownUntil: 0, consecutiveFailures: 0 };
+  return { token: null, cookie: null, expiresAt: 0, cooldownUntil: 0, consecutiveFailures: 0 };
 }
 
 function saveState() {
   try {
     fs.writeFileSync(CACHE_FILE, JSON.stringify({
-      token: session.token, expiresAt: session.expiresAt, cooldownUntil, consecutiveFailures,
+      token: session.token, cookie: session.cookie, expiresAt: session.expiresAt,
+      cooldownUntil, consecutiveFailures,
     }), { mode: 0o600 });
   } catch {}
 }
@@ -142,7 +148,7 @@ async function getToken() {
 
 /** Force a fresh login on next use (e.g. after a 401 from a stream). */
 function invalidate() {
-  session = { token: null, expiresAt: 0 };
+  session = { token: null, expiresAt: 0, cookie: null };
   saveState();
 }
 
@@ -151,8 +157,14 @@ function invalidate() {
  * "tbp-token"), bypassing the username/password login entirely. Handy when the
  * login endpoint is rate-limited: one valid token syncs all coordinates.
  */
-function setToken(token, ttlMs = 55 * 60_000) {
-  session = { token: String(token).trim(), expiresAt: Date.now() + ttlMs };
+function setToken(value, ttlMs = 55 * 60_000) {
+  const v = String(value || '').trim();
+  // Deteksi: string cookie ("name=value; ...") vs token bearer (JWT/opaque).
+  // Cookie selalu memuat '=' (dan biasanya ';'); token tidak.
+  const isCookie = /[=;]/.test(v);
+  session = isCookie
+    ? { token: null, cookie: v, expiresAt: Date.now() + 6 * 60 * 60_000 } // cookie ~6 jam
+    : { token: v, cookie: null, expiresAt: Date.now() + ttlMs };           // token ~55 mnt
   consecutiveFailures = 0;
   cooldownUntil = 0;
   saveState();
@@ -170,7 +182,9 @@ function setToken(token, ttlMs = 55 * 60_000) {
  */
 async function getStreamHeaders({ allowLogin = true } = {}) {
   const headers = { Referer: `${PORTAL_ORIGIN}/`, Origin: PORTAL_ORIGIN };
-  const hasToken = session.token && Date.now() < session.expiresAt;
+  const valid = Date.now() < session.expiresAt;
+  if (session.cookie && valid) { headers.Cookie = session.cookie; return headers; }
+  const hasToken = session.token && valid;
   if (hasToken) { headers.Authorization = session.token; return headers; }
   if (!allowLogin || !isConfigured()) return headers;
   try {
@@ -183,14 +197,17 @@ async function getStreamHeaders({ allowLogin = true } = {}) {
 
 /** Raw single-page fetch from the K3I cctv API (returns the full envelope). */
 async function fetchCctvPage(params = {}) {
-  const token = await getToken();
+  // Auth via cookie (bila di-set) ATAU token bearer (login username/password).
+  const headers = { Referer: `${PORTAL_ORIGIN}/`, Origin: PORTAL_ORIGIN };
+  if (session.cookie && Date.now() < session.expiresAt) headers.Cookie = session.cookie;
+  else headers.Authorization = await getToken();
   const res = await axios.get(`${config.k3i.baseUrl}/v3/cctv`, {
     params: { operation_id: config.k3i.operationId, ...params },
-    headers: { Authorization: token, Referer: `${PORTAL_ORIGIN}/`, Origin: PORTAL_ORIGIN },
+    headers,
     timeout: 25000,
     validateStatus: (s) => s < 500,
   });
-  if (res.status === 401) { invalidate(); throw new Error('Sesi K3I kedaluwarsa'); }
+  if (res.status === 401) { invalidate(); throw new Error('Sesi K3I kedaluwarsa (token/cookie ditolak)'); }
   if (res.status !== 200) throw new Error(`K3I cctv API HTTP ${res.status}`);
   return res.data;
 }
