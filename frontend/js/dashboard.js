@@ -587,9 +587,12 @@ function mountVideoStream(idx, cam, info) {
     const ifr = document.createElement('iframe');
     ifr.src = streamUrl;
     ifr.style.cssText = 'width:100%;height:100%;border:0;display:block;background:#000';
-    ifr.setAttribute('allow', 'autoplay; fullscreen; encrypted-media');
+    ifr.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
     ifr.setAttribute('allowfullscreen', '');
-    ifr.referrerPolicy = 'no-referrer';
+    // YouTube MEMBUTUHKAN origin/referrer untuk memverifikasi domain embed.
+    // 'no-referrer' menyebabkan "Error 153 — Video player configuration error".
+    // strict-origin-when-cross-origin mengirim origin (bukan path) → embed jalan.
+    ifr.referrerPolicy = 'strict-origin-when-cross-origin';
     slotEl.appendChild(ifr);
     markCameraAlive(cam);
     renderSlotOverlay(idx, cam);

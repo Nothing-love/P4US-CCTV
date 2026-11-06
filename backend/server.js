@@ -58,6 +58,7 @@ app.use(helmet({
         "'self'",
         'transcode.baliprov.go.id', 'cctv.dpuprkotang.info', 'rtsp.me',
         'www.youtube-nocookie.com', 'youtube-nocookie.com',
+        'www.youtube.com', 'youtube.com',
         '*.go.id', '*.gov.my',
       ],
       // Server berjalan di HTTP (tanpa TLS) di belakang IP publik. Tanpa baris
