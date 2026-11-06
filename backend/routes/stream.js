@@ -12,6 +12,7 @@ const k3iBridge = require('../services/k3iBridge');
 const jmliveResolver = require('../services/jmliveResolver');
 const k3iResolver = require('../services/k3iResolver');
 const binaMargaResolver = require('../services/binaMargaResolver');
+const samarindaResolver = require('../services/samarindaResolver');
 
 const router = express.Router();
 
@@ -337,6 +338,11 @@ router.get('/info/:cameraId', authenticate, async (req, res) => {
           .run(fresh.link, newType, newHost, camera.id);
         camera = { ...camera, link: fresh.link, link_type: newType, host: newHost };
       }
+    } else if (/^samarinda_/.test(camera.id)) {
+      // Kamera YouTube harian Samarinda: ID siaran berganti tiap hari → ambil
+      // URL embed dgn ID LIVE terkini agar tak hitam keesokan hari.
+      const fresh = await samarindaResolver.resolveEmbedById(camera.id);
+      if (fresh && fresh !== camera.link) camera = { ...camera, link: fresh };
     }
   } catch { /* resolver gagal → pakai URL katalog apa adanya */ }
 

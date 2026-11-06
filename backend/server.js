@@ -146,6 +146,8 @@ function start() {
   startHealthChecker();
   // Panaskan indeks Bina Marga (URL jmlive segar) agar siap saat user buka kamera.
   try { require('./services/binaMargaResolver').prewarm(); } catch {}
+  // Panaskan juga cache ID live YouTube Samarinda (ID berganti tiap hari).
+  try { require('./services/samarindaResolver').prewarm(); } catch {}
   // Koordinat K3I dikunci: sync otomatis dimatikan agar posisi tidak berubah.
   // Re-sync manual masih bisa lewat endpoint admin bila sewaktu-waktu diperlukan.
   const { ffmpegAvailable } = require('./services/ffmpegCheck');
