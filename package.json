@@ -13,6 +13,7 @@
     "import-bandung-kab": "node backend/scripts/importBandungKab.js",
     "import-binamarga": "node backend/scripts/importBinaMarga.js",
     "import-samarinda": "node backend/scripts/importSamarinda.js",
+    "import-jakcctv": "node backend/scripts/importJakCCTV.js",
     "reset-health": "node backend/scripts/resetHealth.js"
   },
   "dependencies": {
