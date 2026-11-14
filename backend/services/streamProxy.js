@@ -99,24 +99,37 @@ function buildProxyUrl(originalUrl, proxyBase) {
   return `${proxyBase}?url=${encodeURIComponent(originalUrl)}`;
 }
 
+// Segmen media = URL yang BUKAN playlist. Playlist = .m3u8/.m3u (query opsional).
+// Semua selain itu — .ts DAN fMP4 (.mp4/.m4s + init segment) — adalah binary.
+// Sumber MediaMTX (Semarang/Malang) pakai segmen .mp4; kalau tak dikenali, binary-
+// nya salah diperlakukan sbg playlist (di-"rewrite" → rusak) → fragLoadError.
+function isSegmentUrl(url) { return !/\.m3u8?(\?|$)/i.test(url); }
+
 function rewriteM3U8(content, originalBaseUrl, proxyBase) {
   const base = new URL(originalBaseUrl);
   const baseDir = base.href.substring(0, base.href.lastIndexOf('/') + 1);
+  const toAbs = (u) => {
+    if (/^https?:\/\//i.test(u)) return u;
+    if (u.startsWith('//')) return `${base.protocol}${u}`;
+    try { return new URL(u, baseDir).href; } catch { return null; }
+  };
 
   return content.split('\n').map((line) => {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) return line;
-
-    // Resolve relative and protocol-relative URLs
-    let absUrl;
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      absUrl = trimmed;
-    } else if (trimmed.startsWith('//')) {
-      absUrl = `${base.protocol}${trimmed}`;
-    } else {
-      try { absUrl = new URL(trimmed, baseDir).href; } catch { return line; }
+    if (!trimmed) return line;
+    if (trimmed.startsWith('#')) {
+      // Init fMP4 (#EXT-X-MAP) & kunci (#EXT-X-KEY) menaruh URL di URI="...":
+      // harus ikut diproksi, kalau tidak init segment-nya gagal → fragLoadError.
+      if (/#EXT-X-(MAP|KEY)/i.test(trimmed) && /URI="/i.test(line)) {
+        return line.replace(/URI="([^"]+)"/i, (m, uri) => {
+          const abs = toAbs(uri);
+          return abs ? `URI="${buildProxyUrl(abs, proxyBase)}"` : m;
+        });
+      }
+      return line;
     }
-    return buildProxyUrl(absUrl, proxyBase);
+    const absUrl = toAbs(trimmed);
+    return absUrl ? buildProxyUrl(absUrl, proxyBase) : line;
   }).join('\n');
 }
 
@@ -147,7 +160,7 @@ async function proxyHLS(req, res) {
     return res.status(400).json({ error: 'Invalid URL' });
   }
 
-  const isSegment = /\.ts(\?|$)/i.test(targetUrl) || /\/media_.*\.ts/i.test(targetUrl);
+  const isSegment = isSegmentUrl(targetUrl);
   const cached = !isSegment && getCached(targetUrl);
 
   if (cached) {
@@ -324,4 +337,4 @@ async function checkStreamHealth(url, linkType) {
   return { status: 'DEAD', latencyMs: r.latencyMs };
 }
 
-module.exports = { proxyHLS, checkStreamHealth, checkRtspReachable };
+module.exports = { proxyHLS, checkStreamHealth, checkRtspReachable, rewriteM3U8, isSegmentUrl };
