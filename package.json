@@ -14,6 +14,9 @@
     "import-binamarga": "node backend/scripts/importBinaMarga.js",
     "import-samarinda": "node backend/scripts/importSamarinda.js",
     "import-jakcctv": "node backend/scripts/importJakCCTV.js",
+    "import-semarang": "node backend/scripts/importSemarang.js",
+    "import-malang": "node backend/scripts/importMalang.js",
+    "import-gresik": "node backend/scripts/importGresik.js",
     "reset-health": "node backend/scripts/resetHealth.js"
   },
   "dependencies": {
